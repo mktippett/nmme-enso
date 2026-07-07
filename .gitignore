@@ -1,0 +1,78 @@
+# Claude Code local instructions (never public)
+CLAUDE.md
+
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data files (large; keep parquets out of git unless small)
+*.parquet
+*.nc
+*.h5
+*.hdf5
+*.hdf
+*.zarr
+*.grib
+*.grb
+*.feather
+*.pkl
+*.pickle
+
+# Raw CSV dumps (usually large)
+# *.csv   # comment out if CSVs are small reference files that should be tracked
+
+# Plots (regenerable; commit selectively)
+# plots/  # uncomment to exclude all plots from git
+
+# Copyrighted journal PDFs — cite in README instead (DOI), never commit
+papers/*.pdf
+
+# Disk cache for expensive climatology/scaling computations (config.py) —
+# regenerable, keyed on store fingerprints, not source of truth.
+cache/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
