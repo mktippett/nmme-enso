@@ -1,6 +1,6 @@
 # latest_forecast.py — Behavioral Specification
 
-> Last reviewed against code: 2026-07-07 (scaling factor switched to grand-mean pooling)
+> Last reviewed against code: 2026-07-09 (MMM line added to Compare/Spread/Mean)
 
 ## Purpose
 
@@ -236,6 +236,21 @@ rather than plotted as a gap.
   default cycle.
 - **Mean** — selected init (`now_idx`) only, ensemble-mean lines. Same color
   override array as Compare/Spread.
+- **Multi-model mean (MMM)** — Compare, Spread, and Mean each also plot an
+  equal-weight mean across `avail` models (`MMM_COLOR = "0.75"`, light gray),
+  computed from the same per-model ensemble-mean arrays already plotted for
+  that figure (i.e. `xr.concat([...], dim="model").mean("model")` over the
+  per-model `_index_transform` output collected during the loop — same MMM
+  definition as `skill.py`'s `add_mmm`: equal-weight mean of each model's own
+  member mean, not a member-pooled grand mean). It is plotted **last**, after
+  the per-model loop, with no explicit `zorder`, so it renders on top of the
+  colored per-model lines (matplotlib's default increasing z-order by call
+  order) rather than being buried under them. In Compare this means two MMM
+  lines (previous init dashed, selected init solid), matching the per-model
+  convention; legend label `"MMM"`. **Not** added to the Grid figure — tried
+  and deliberately reverted (see Synchronization Log 2026-07-09) since Grid's
+  panels are member x lead heatmaps and MMM has no member dimension of its
+  own.
 
 ### 4a. X-axis ticks and limits
 
@@ -298,6 +313,8 @@ limits.
 | All other models | climatology = per-`S.month` ensemble mean over **target (valid) time** in `[CLIM_START_YEAR, CLIM_END_YEAR]` | Standard fixed climatology period (1991-2020), defined on valid time rather than init time |
 | `config.CLIM_START_YEAR`, `config.CLIM_END_YEAR` | 1991, 2020 | Standard WMO 30-year normal period (truncated at 2020, the last full decade at time of writing) |
 | Plume color overrides | `#005030` (model 0), `#F17221` (model 1), `#1f77b4` (model 2) | Notebook convention distinguishing the first three models from the default matplotlib cycle |
+| `MMM_COLOR` | `"0.75"` (light gray) | Visually distinct from all per-model colors so the multi-model mean reads as a summary line, not another model |
+| Legend `ncol` (Compare/Spread/Mean) | `2` (all three) | Standardized 2026-07-09 — was inconsistent (1/2/3) before the MMM entry brought every legend to the same 8-item (7 models + MMM) count |
 | Seasonal window | `rolling(L=3, center=True)` | Centered (not trailing) so the season label (e.g. DJF) matches the NOAA ONI overlapping-season convention, which is also centered |
 | `SEASON_INITIALS` | `"JFMAMJJASOND"` | Single-letter month initials (index 0 = January) used to build 3-letter season labels |
 | `config.TROPICS_LAT` | `slice(-20, 20)`, all longitudes | Tropical-mean region for the relative Niño-3.4 index, per L'Heureux, Tippett et al. (2024); van Oldenborgh et al. (2021) originated the index, the paper tested 15-30° alternatives and confirmed 20°S-20°N |
@@ -439,3 +456,4 @@ print("Verification passed.")
 | 2026-07-07 | **Switched `config.rel_scaling_factor`'s denominator from per-member to grand-mean pooling.** Formula change: `sqrt(ref.ssta_rel.groupby('S.month').var('S').mean('M'))` → `sqrt(ref.ssta_rel.groupby('S.month').var(['S', 'M']))` (both `factor_monthly` and `factor_seasonal`). Motivated by `scripts/rel_scaling_compare.py`'s A-vs-C evidence (`n34r_scaling_msess_diff_AC_start.png`): MSESS is not worse for grand-mean (mean MSESS(per-member) − MSESS(grand-mean) = −0.015 across model/month/lead, i.e. grand-mean marginally better), and grand-mean is the simpler estimator to describe. `rel_scaling_compare.py` restructured accordingly: `A` = per-member (now the local alternative, `_factor_permember`, moved out of `config.py`), `B` = ensemble-mean (flawed, unchanged), `C` = `config.rel_scaling_factor` (now grand-mean, chosen/production). Added the third pairwise comparison, B-vs-C (`n34r_scaling_msess_diff_BC_{start,target}.png`, full-range color scale — not dominated by outliers the way A-vs-C was): mean MSESS(B) − MSESS(C) = −0.067, i.e. grand-mean beats the flawed ensemble-mean estimator by even more than per-member did. All production `n34r_*`/`n34r_seasonal_*` figures regenerated (`latest_forecast.py`) — scaling factor numeric range shifted slightly, 1991-2020 monthly range [0.60, 2.42] → [0.51, 2.30]. See Algorithm §1a and Constants & Scientific Rationale. | ✓ |
 | 2026-07-07 | Output moved from `plots/` to `plots/latest_forecast/` (per-script subdirectory, `config.PLOTS_DIR_LATEST_FORECAST`) | ✓ |
 | 2026-07-07 | `config.ERSSTV5_NC` default changed to the repo-local `OBS_DIR / "ERSSTv5.sst.mnmean.nc"` (see `specs/skill.md` same-date row for details). `rel_scaling_factor` 1991-2020 range verified unchanged ([0.51, 2.30] monthly); figures regenerated. | ✓ |
+| 2026-07-09 | **Added a multi-model mean (MMM) line to Compare/Spread/Mean.** New `MMM_COLOR = "0.75"` constant; each function collects the per-model arrays it already computes into a list during the loop, then plots `xr.concat(..., dim="model").mean("model")` after the loop with no explicit `zorder` (renders on top, drawn last) and `label="MMM"`. Also standardized `ax.legend(ncol=...)` to `2` in all three (was 1/2/3). **Also tried, then reverted same-session:** adding an 8th "MMM" panel to the Grid facet (`plot_grid`) by broadcasting the same MMM series across the `M` coordinate into a uniform-color block — the user judged this a bad idea and asked it removed; Grid stays at 7 panels, 8th `col_wrap` slot empty, as before. See Algorithm §4 and Constants. All 12 line-plot figures (`n34_*`/`n34r_*` compare/spread/mean, monthly/seasonal) regenerated; Grid figures unchanged from pre-session. | ✓ |

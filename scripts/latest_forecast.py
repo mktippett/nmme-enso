@@ -47,9 +47,12 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 import matplotlib.pyplot as plt
 
 import config
+
+MMM_COLOR = "0.75"
 
 # Single-letter month initials, index 0 = January (the notebook's "m_str").
 SEASON_INITIALS = "JFMAMJJASOND"
@@ -187,6 +190,7 @@ def plot_compare(ds, start, avail, plume_colors, spec, now_idx, prev_idx, date_s
     start_month_prev = int(ds.S.isel(S=prev_idx).dt.month)
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
+    prev_list, now_list = [], []
     for im in avail:
         model = ds.model.isel(model=im).item()
         color = plume_colors[im]
@@ -194,16 +198,25 @@ def plot_compare(ds, start, avail, plume_colors, spec, now_idx, prev_idx, date_s
         prev = _index_transform(ds[var].isel(S=prev_idx).mean("M").isel(model=im), spec, seasonal, model, start_month_prev)
         ax.plot(leads_prev, prev, "--", lw=2, color=color, alpha=0.5)
         ax.plot(leads_prev[l0], prev.isel(L=l0), "o", lw=2, color=color, alpha=0.5)
+        prev_list.append(prev)
 
         now = _index_transform(ds[var].isel(S=now_idx).mean("M").isel(model=im), spec, seasonal, model, start_month_now)
         ax.plot(leads_now, now, lw=3, color=color, label=config.short_label(model), alpha=0.75)
         ax.plot(leads_now[l0], now.isel(L=l0), "s", lw=3, color=color, alpha=0.75)
+        now_list.append(now)
+
+    mmm_prev = xr.concat(prev_list, dim="model").mean("model")
+    mmm_now = xr.concat(now_list, dim="model").mean("model")
+    ax.plot(leads_prev, mmm_prev, "--", lw=3, color=MMM_COLOR, alpha=0.9)
+    ax.plot(leads_prev[l0], mmm_prev.isel(L=l0), "o", lw=3, color=MMM_COLOR, alpha=0.9)
+    ax.plot(leads_now, mmm_now, lw=4, color=MMM_COLOR, label="MMM", alpha=0.9)
+    ax.plot(leads_now[l0], mmm_now.isel(L=l0), "s", lw=4, color=MMM_COLOR, alpha=0.9)
 
     ticks = pd.date_range(start[prev_idx], periods=13, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
     kind_label = "seasonal (3-month running mean)" if seasonal else "monthly"
     ax.set_title(f"{spec['name']} {kind_label} anomaly (1991-2020 climatology mostly)")
-    ax.legend(ncol=1)
+    ax.legend(ncol=2)
     ax.grid(visible=True)
     fig.set_facecolor("white")
     plt.tight_layout()
@@ -224,6 +237,7 @@ def plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=F
     leads = pd.date_range(start[now_idx], periods=12, freq="MS")
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
+    mean_list = []
     for im in avail:
         model = ds.model.isel(model=im).item()
         color = colors[im]
@@ -233,6 +247,11 @@ def plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=F
         ax.plot(leads, members.T, lw=1.5, color=color, alpha=0.35)
         ax.plot(leads, mean, lw=4, color=color, label=config.short_label(model), alpha=0.85)
         ax.plot(leads[l0], mean.isel(L=l0), "s", lw=3, color=color)
+        mean_list.append(mean)
+
+    mmm = xr.concat(mean_list, dim="model").mean("model")
+    ax.plot(leads, mmm, lw=5, color=MMM_COLOR, label="MMM", alpha=0.9)
+    ax.plot(leads[l0], mmm.isel(L=l0), "s", lw=4, color=MMM_COLOR)
 
     ticks = pd.date_range(start[now_idx], periods=12, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
@@ -259,18 +278,24 @@ def plot_mean(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=Fal
     leads = pd.date_range(start[now_idx], periods=12, freq="MS")
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
+    mean_list = []
     for im in avail:
         model = ds.model.isel(model=im).item()
         color = colors[im]
         mean = _index_transform(ds[var].isel(S=now_idx).mean("M").isel(model=im), spec, seasonal, model, start_month_now)
         ax.plot(leads, mean, lw=3, color=color, label=config.short_label(model), alpha=0.75)
         ax.plot(leads[l0], mean.isel(L=l0), "s", lw=3, color=color, alpha=0.75)
+        mean_list.append(mean)
+
+    mmm = xr.concat(mean_list, dim="model").mean("model")
+    ax.plot(leads, mmm, lw=4, color=MMM_COLOR, label="MMM", alpha=0.9)
+    ax.plot(leads[l0], mmm.isel(L=l0), "s", lw=4, color=MMM_COLOR)
 
     ticks = pd.date_range(start[now_idx], periods=12, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
     kind_label = "seasonal (3-month running mean)" if seasonal else "monthly"
     ax.set_title(f"{spec['name']} {kind_label} anomaly (1991-2020 climatology)")
-    ax.legend(ncol=3)
+    ax.legend(ncol=2)
     ax.grid(visible=True)
     fig.set_facecolor("white")
 
