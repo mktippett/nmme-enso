@@ -1,6 +1,6 @@
 # latest_forecast.py — Behavioral Specification
 
-> Last reviewed against code: 2026-07-09 (MMM line added to Compare/Spread/Mean)
+> Last reviewed against code: 2026-07-22 (added synthetic error-covariance spread family)
 
 ## Purpose
 
@@ -20,15 +20,20 @@ each as its own figure set:
   the paper's own obs-only ratio (per the first author, 2026-07-06; see
   Constants & Scientific Rationale).
 
-For each index, the three plume figures (compare, spread, mean) are each
-produced in a **monthly** and a **seasonal** (3-month running mean) variant,
-plus one grid figure (monthly only) — 7 outputs per index, 14 total.
+For each index, the four plume figures (compare, spread, spread-synthetic,
+mean) are each produced in a **monthly** and a **seasonal** (3-month running
+mean) variant, plus one grid figure (monthly only) — 9 outputs per index, 18
+total. Spread-synthetic (§4b) replaces the real (underdispersed, model-bias-
+dominated) ensemble members with a calibrated Gaussian plume drawn from the
+historical MMM forecast-error covariance across leads (Barnston, Tippett,
+van den Dool & Unger 2015, *J. Appl. Meteor. Climatol.*, **54**, 1579–1595,
+https://doi.org/10.1175/JAMC-D-14-0188.1, Fig. 9 lower panels).
 
 ## CLI Arguments
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `--init-date YYYY-MM[-DD]` | none (latest init) | Plot this initialization instead of the latest, matched by calendar year/month (day ignored). Raises `ValueError` if no init in the store matches that month. All 14 output filenames get a `_<YYYY-MM>` suffix (see Outputs), so an explicit-init run never overwrites the default latest-init run's files. |
+| `--init-date YYYY-MM[-DD]` | none (latest init) | Plot this initialization instead of the latest, matched by calendar year/month (day ignored). Raises `ValueError` if no init in the store matches that month. All 18 output filenames get a `_<YYYY-MM>` suffix (see Outputs), so an explicit-init run never overwrites the default latest-init run's files. |
 
 ## Inputs
 
@@ -70,16 +75,20 @@ year-month, not the value typed on the command line.
 | `plots/latest_forecast/n34_monthly_grid.png` | Facet grid (one panel per model) of the selected-init Niño-3.4 anomaly, lead x member | PNG, dpi=150 |
 | `plots/latest_forecast/n34_monthly_compare.png` | Ensemble-mean plume: selected init (solid) vs. previous init (dashed), monthly | PNG, dpi=200 |
 | `plots/latest_forecast/n34_monthly_spread.png` | All members (thin) + ensemble mean (thick), selected init only, monthly | PNG, dpi=200 |
+| `plots/latest_forecast/n34_monthly_spread_synthetic.png` | 100 synthetic members + MMM + 10th/90th percentile, drawn from the historical MMM error covariance across leads (see §4b), selected init only, monthly | PNG, dpi=200 |
 | `plots/latest_forecast/n34_monthly_mean.png` | Ensemble-mean-only plume, selected init only, monthly | PNG |
 | `plots/latest_forecast/n34_seasonal_compare.png` | Same as `n34_monthly_compare.png`, but each series is a centered 3-month running mean over lead, x-axis labeled by target season | PNG, dpi=200 |
 | `plots/latest_forecast/n34_seasonal_spread.png` | Same as `n34_monthly_spread.png`, seasonal (members and ensemble mean both smoothed) | PNG, dpi=200 |
+| `plots/latest_forecast/n34_seasonal_spread_synthetic.png` | Same as `n34_monthly_spread_synthetic.png`, seasonal (error covariance computed in the smoothed space, see §4b) | PNG, dpi=200 |
 | `plots/latest_forecast/n34_seasonal_mean.png` | Same as `n34_monthly_mean.png`, seasonal | PNG |
 | `plots/latest_forecast/n34r_monthly_grid.png` | Same as `n34_monthly_grid.png`, for the scaled relative Niño-3.4 anomaly | PNG, dpi=150 |
 | `plots/latest_forecast/n34r_monthly_compare.png` | Same as `n34_monthly_compare.png`, relative index | PNG, dpi=200 |
 | `plots/latest_forecast/n34r_monthly_spread.png` | Same as `n34_monthly_spread.png`, relative index | PNG, dpi=200 |
+| `plots/latest_forecast/n34r_monthly_spread_synthetic.png` | Same as `n34_monthly_spread_synthetic.png`, relative index — error covariance computed in the scaled `ssta_rel` space and verified against **observed absolute** Niño-3.4 (`ds.obsa`), not `ds.obsa_rel` (see §4b) | PNG, dpi=200 |
 | `plots/latest_forecast/n34r_monthly_mean.png` | Same as `n34_monthly_mean.png`, relative index | PNG |
 | `plots/latest_forecast/n34r_seasonal_compare.png` | Same as `n34_seasonal_compare.png`, relative index (own seasonal scaling factor) | PNG, dpi=200 |
 | `plots/latest_forecast/n34r_seasonal_spread.png` | Same as `n34_seasonal_spread.png`, relative index | PNG, dpi=200 |
+| `plots/latest_forecast/n34r_seasonal_spread_synthetic.png` | Same as `n34_seasonal_spread_synthetic.png`, relative index (own seasonal scaling factor, verified against `ds.obsa`) | PNG, dpi=200 |
 | `plots/latest_forecast/n34r_seasonal_mean.png` | Same as `n34_seasonal_mean.png`, relative index | PNG |
 
 ## Algorithm
@@ -234,6 +243,15 @@ rather than plotted as a gap.
   (alpha 0.35) + ensemble mean thick (alpha 0.85). Same color override array
   as Compare (indexed by the same positional model index), not the plain
   default cycle.
+- **Spread-synthetic** — selected init (`now_idx`) only; the current MMM
+  (built identically to Spread's, via the same per-model `_index_transform`
+  loop) plus `N_SYNTHETIC_MEMBERS=100` Gaussian scenarios drawn from the
+  historical MMM forecast-error covariance across leads and added to that
+  MMM, plus a dashed 10th/90th percentile envelope. See §4b for the full
+  covariance/draw procedure. Uses its own colors
+  (`SYNTHETIC_MEMBER_COLOR`/`SYNTHETIC_MMM_COLOR`, not the Compare/Spread/Mean
+  override array or `MMM_COLOR`) since `MMM_COLOR = "0.75"` would be
+  invisible against the synthetic member cloud.
 - **Mean** — selected init (`now_idx`) only, ensemble-mean lines. Same color
   override array as Compare/Spread.
 - **Multi-model mean (MMM)** — Compare, Spread, and Mean each also plot an
@@ -301,6 +319,88 @@ limits.
   `config.load_nino34_verification()` itself is unaffected — smoothing and
   scaling are both plotting-time transforms only.
 
+### 4b. Synthetic error-covariance plume (`_synthetic_plume`)
+
+Implements Barnston, Tippett, van den Dool & Unger (2015, *J. Appl. Meteor.
+Climatol.*, **54**, 1579–1595, https://doi.org/10.1175/JAMC-D-14-0188.1,
+Fig. 9 lower panels): "generate a plume of equally likely scenarios ...
+using a Gaussian random number generator, by employing the MME mean
+forecast in combination with the historical covariance of the errors over
+the hindcast period." Computed
+fresh for each figure (index x monthly/seasonal), **in that figure's own
+final transformed/scaled space**, so the seasonal covariance is not derived
+from a shared monthly draw:
+
+1. **Historical MMM forecast**, over the `avail` models used by the current
+   plume, restricted to hindcast starts `year(S) in [CLIM_START_YEAR,
+   CLIM_END_YEAR]` (1991-2020; the same predicate as `rel_scaling_factor`).
+   This exact period was chosen **because every NMME model has complete
+   forecast coverage there** (verified 360/360 starts per model at zero
+   lead — `GFDL-SPEAR`, the newest model, starts exactly in 1991), not
+   merely because it's the standard climatology window. `mean('model')`
+   later in this step is skipna, so if a future model with a shorter
+   hindcast joined `avail_models`, it would silently drop out of part of
+   the historical sample instead of raising — `_synthetic_plume` guards
+   this explicitly: before building `fc`, it checks every `avail_models`
+   member has a non-NaN zero-lead forecast at every hindcast start, and
+   raises `ValueError` naming any model that doesn't. Then:
+   `fc = ds[spec['var']].sel(model=avail_models).mean('M').where(hindcast, drop=True)`
+   → `(model, S, L)`. If `seasonal`, roll `fc` (`L=3, center=True`) before
+   any scaling — matching `_index_transform`'s order. For the relative
+   index, multiply by `factor.sel(model=avail_models, month=fc.S.dt.month)`
+   (`factor_seasonal` if seasonal, else `factor_monthly`) — same factor
+   already applied to the plotted plume. `mmm_hist = fc.mean('model')` →
+   `(S, L)`.
+2. **Observed reference**: `obs = ds.obsa.where(hindcast, drop=True)`
+   (rolled the same way if seasonal). **Both n34 and n34r verify against
+   observed absolute Niño-3.4** (`ds.obsa`), *not* `ds.obsa_rel` — consistent
+   with `rel_scaling_factor`, which calibrates the model relative index to
+   observed absolute Niño-3.4 variance (see Constants).
+3. **Error**: `err = mmm_hist - obs` → `(S, L)`, used **demeaned** —
+   `np.cov` subtracts the per-lead sample mean, so any residual MMM
+   conditional bias is deliberately *not* injected into the synthetic
+   members; the plume stays centered on the *current* MMM, not a
+   bias-corrected one.
+4. **Stratify by the current start month**: `err_month = err.where(err.S.dt.month
+   == start_month_now, drop=True)` → `(S~30, L)` (≈30 hindcast years sharing
+   the same init calendar month as the current forecast).
+5. **Drop leads with any missing sample**: `err_valid =
+   err_month.dropna('L', how='any')` — labeled, not positional; keeps the
+   surviving `L` coordinate (`valid_L`). Monthly: expect 0 dropped (12/12
+   leads, since `ds.obsa` is fully populated for 1991-2020 starts and
+   `mean('model')` is skipna). Seasonal: expect 2 dropped (the rolling
+   mean's NaN first/last lead, same two leads Spread's seasonal variant
+   already drops). A print warning fires if the dropped count differs from
+   this expectation.
+6. **Covariance** (numpy boundary): `cov = np.cov(err_valid.transpose('S',
+   'L').values, rowvar=False)` → `(nL, nL)`. Diagonal = per-lead error
+   variance (≈ SEE²); off-diagonals = lead-to-lead error correlation — this
+   is what gives the synthetic members realistic lead-to-lead coherence
+   instead of independent per-lead noise.
+7. **Draw**: `rng = np.random.default_rng(SYNTHETIC_SEED)`, `draws =
+   rng.multivariate_normal(np.zeros(nL), cov, size=N_SYNTHETIC_MEMBERS)` →
+   `(100, nL)`. Fixed seed (`SYNTHETIC_SEED=0`) so a rerun with unchanged
+   inputs reproduces byte-identical draws.
+8. **Add to the current MMM**: wrap `draws` as a DataArray on `(member,
+   L=valid_L)`, add `mmm.sel(L=valid_L)` (labeled align — `mmm` is the same
+   `(L,)` array Spread-synthetic already built), then `.reindex(L=mmm['L'])`
+   back onto the full 12-lead axis (NaN at any dropped lead, e.g. the
+   seasonal endpoints) → synthetic `(member, L)`.
+
+The plotted 10th/90th percentile envelope is `synthetic.quantile([0.1, 0.9],
+dim='member')` (labeled, skipna) — at the seasonal endpoint leads (all-NaN
+across members) this raises a benign `RuntimeWarning: All-NaN slice
+encountered` and correctly returns NaN (see Edge Cases).
+
+**Deliberate deviations from raw Spread**: (a) the plume is *not* meant to
+reproduce the total multi-model spread, which mixes model-specific climate
+drift/bias with genuine forecast uncertainty (compare `n34_monthly_spread.png`,
+where inter-model separation — e.g. GEOSS2S trending to ~4.7°C vs. CanESM5 to
+~1°C by Feb — dwarfs any single model's own member spread); it reproduces the
+*MMM's own* out-of-sample verification uncertainty instead, which is
+typically narrower at short leads. (b) No bias correction is applied — the
+plume centers on the current (as-is) MMM, not a debiased one.
+
 ## Constants & Scientific Rationale
 
 | Name | Value | Rationale |
@@ -314,6 +414,10 @@ limits.
 | `config.CLIM_START_YEAR`, `config.CLIM_END_YEAR` | 1991, 2020 | Standard WMO 30-year normal period (truncated at 2020, the last full decade at time of writing) |
 | Plume color overrides | `#005030` (model 0), `#F17221` (model 1), `#1f77b4` (model 2) | Notebook convention distinguishing the first three models from the default matplotlib cycle |
 | `MMM_COLOR` | `"0.75"` (light gray) | Visually distinct from all per-model colors so the multi-model mean reads as a summary line, not another model |
+| `N_SYNTHETIC_MEMBERS` | 100 | Matches the paper's Fig. 9 lower-panel member count |
+| `SYNTHETIC_SEED` | 0 | Fixed seed (`np.random.default_rng`) so reruns with unchanged inputs reproduce byte-identical synthetic draws |
+| `SYNTHETIC_MEMBER_COLOR` | `"#7a86c8"` (light steel-blue) | Distinct from the real-member Spread palette and from `MMM_COLOR`, echoing the paper's Fig. 9 lower-panel member color |
+| `SYNTHETIC_MMM_COLOR` | `"#1a1a1a"` (near-black) | `MMM_COLOR = "0.75"` is invisible against the synthetic member cloud (also light); Spread-synthetic uses a dark line for its MMM/percentile lines instead |
 | Legend `ncol` (Compare/Spread/Mean) | `2` (all three) | Standardized 2026-07-09 — was inconsistent (1/2/3) before the MMM entry brought every legend to the same 8-item (7 models + MMM) count |
 | Seasonal window | `rolling(L=3, center=True)` | Centered (not trailing) so the season label (e.g. DJF) matches the NOAA ONI overlapping-season convention, which is also centered |
 | `SEASON_INITIALS` | `"JFMAMJJASOND"` | Single-letter month initials (index 0 = January) used to build 3-letter season labels |
@@ -358,6 +462,22 @@ limits.
   `config.N_LEADS_PLOT` docstring) are NaN-padded to 12 leads in the store,
   so no special-casing is needed in the plotting code — NaNs simply stop the
   line early.
+- **A future model with incomplete 1991-2020 hindcast coverage joining
+  `avail_models`**: `_synthetic_plume` raises `ValueError` naming the
+  incomplete model(s) rather than silently computing the historical MMM
+  error from a shrinking model set partway through the hindcast — the
+  1991-2020 period was deliberately chosen because all 7 current models
+  (`GFDL-SPEAR`, the newest, starts exactly 1991) have complete coverage
+  there (see §4b step 1).
+- **Spread-synthetic's 10th/90th percentile at seasonal endpoint leads**: the
+  seasonal variant's `synthetic` array is NaN at the two rolling-mean
+  endpoint leads (see above); `synthetic.quantile([0.1, 0.9],
+  dim='member')` on an all-NaN slice raises `RuntimeWarning: All-NaN slice
+  encountered` (from `numpy.nanpercentile` under the hood) and correctly
+  returns NaN — benign, expected, confirmed by comparing total
+  `RuntimeWarning` counts before/after this feature (25 baseline vs. 27
+  with Spread-synthetic added, for 2 seasonal figures x 1 warning each; no
+  *new* degrees-of-freedom warnings from the covariance step itself).
 - **Attrs leaking into the grid colorbar label**: `ds.ssta`/`ds.ssta_rel`
   inherit a stale `standard_name`/`units` from the raw store field (copied
   wholesale by `_n34_average`/`_tropics_average`), and multiplying by the
@@ -421,19 +541,39 @@ for f in [
     "n34_monthly_grid.png",
     "n34_monthly_compare.png",
     "n34_monthly_spread.png",
+    "n34_monthly_spread_synthetic.png",
     "n34_monthly_mean.png",
     "n34_seasonal_compare.png",
     "n34_seasonal_spread.png",
+    "n34_seasonal_spread_synthetic.png",
     "n34_seasonal_mean.png",
     "n34r_monthly_grid.png",
     "n34r_monthly_compare.png",
     "n34r_monthly_spread.png",
+    "n34r_monthly_spread_synthetic.png",
     "n34r_monthly_mean.png",
     "n34r_seasonal_compare.png",
     "n34r_seasonal_spread.png",
+    "n34r_seasonal_spread_synthetic.png",
     "n34r_seasonal_mean.png",
 ]:
     assert (config.PLOTS_DIR_LATEST_FORECAST / f).exists(), f"missing output {f}"
+
+# Synthetic-plume sanity: same-seed rerun reproduces byte-identical draws.
+from latest_forecast import (
+    N_SYNTHETIC_MEMBERS, SYNTHETIC_SEED, _synthetic_plume,
+)
+import xarray as xr
+
+now_idx = _resolve_init_idx(start, None)
+spec_n34 = {"var": "ssta", "prefix": "n34", "name": "Nino 3.4", "scale": None}
+avail = np.where(~np.isnan(ds[spec_n34["var"]].isel(S=now_idx, L=0).mean("M")))[0]
+mean_list = [ds[spec_n34["var"]].isel(S=now_idx, model=im).mean("M") for im in avail]
+mmm = xr.concat(mean_list, dim="model").mean("model")  # matches plot_spread_synthetic's own mmm
+synth1 = _synthetic_plume(ds, avail, spec_n34, False, now_idx, mmm)
+synth2 = _synthetic_plume(ds, avail, spec_n34, False, now_idx, mmm)
+assert synth1.sizes["member"] == N_SYNTHETIC_MEMBERS
+xr.testing.assert_identical(synth1, synth2)  # fixed seed -> identical draws
 
 print("Verification passed.")
 ```
@@ -456,4 +596,6 @@ print("Verification passed.")
 | 2026-07-07 | **Switched `config.rel_scaling_factor`'s denominator from per-member to grand-mean pooling.** Formula change: `sqrt(ref.ssta_rel.groupby('S.month').var('S').mean('M'))` → `sqrt(ref.ssta_rel.groupby('S.month').var(['S', 'M']))` (both `factor_monthly` and `factor_seasonal`). Motivated by `scripts/rel_scaling_compare.py`'s A-vs-C evidence (`n34r_scaling_msess_diff_AC_start.png`): MSESS is not worse for grand-mean (mean MSESS(per-member) − MSESS(grand-mean) = −0.015 across model/month/lead, i.e. grand-mean marginally better), and grand-mean is the simpler estimator to describe. `rel_scaling_compare.py` restructured accordingly: `A` = per-member (now the local alternative, `_factor_permember`, moved out of `config.py`), `B` = ensemble-mean (flawed, unchanged), `C` = `config.rel_scaling_factor` (now grand-mean, chosen/production). Added the third pairwise comparison, B-vs-C (`n34r_scaling_msess_diff_BC_{start,target}.png`, full-range color scale — not dominated by outliers the way A-vs-C was): mean MSESS(B) − MSESS(C) = −0.067, i.e. grand-mean beats the flawed ensemble-mean estimator by even more than per-member did. All production `n34r_*`/`n34r_seasonal_*` figures regenerated (`latest_forecast.py`) — scaling factor numeric range shifted slightly, 1991-2020 monthly range [0.60, 2.42] → [0.51, 2.30]. See Algorithm §1a and Constants & Scientific Rationale. | ✓ |
 | 2026-07-07 | Output moved from `plots/` to `plots/latest_forecast/` (per-script subdirectory, `config.PLOTS_DIR_LATEST_FORECAST`) | ✓ |
 | 2026-07-07 | `config.ERSSTV5_NC` default changed to the repo-local `OBS_DIR / "ERSSTv5.sst.mnmean.nc"` (see `specs/skill.md` same-date row for details). `rel_scaling_factor` 1991-2020 range verified unchanged ([0.51, 2.30] monthly); figures regenerated. | ✓ |
+| 2026-07-22 | **Hardened the synthetic family's hindcast-period assumption.** Confirmed empirically (360/360 starts per model at zero lead) that all 7 current NMME models have complete 1991-2020 coverage, which is *why* that period was chosen for the error covariance, not just because it's the standard climatology window. Added an explicit check in `_synthetic_plume` that raises `ValueError` if any `avail_models` member has incomplete zero-lead coverage over that period, rather than letting `mean('model')`'s skipna behavior silently shrink the effective model set for part of the hindcast. No change to computed output (all models currently pass). See Algorithm §4b and Edge Cases. | ✓ |
+| 2026-07-22 | **Added the synthetic error-covariance spread family** (`plot_spread_synthetic`, `_synthetic_plume`), implementing Barnston, Tippett, van den Dool & Unger (2015, *J. Appl. Meteor. Climatol.*, **54**, 1579–1595, https://doi.org/10.1175/JAMC-D-14-0188.1, Fig. 9 lower panels): 100 Gaussian scenarios drawn from the historical (1991-2020) MMM forecast-error covariance across leads, stratified by the current start month, added to the current MMM. Both n34 and n34r verify against observed absolute Niño-3.4 (`ds.obsa`), per direct author request — not `ds.obsa_rel`. New constants `N_SYNTHETIC_MEMBERS=100`, `SYNTHETIC_SEED=0`, `SYNTHETIC_MEMBER_COLOR`, `SYNTHETIC_MMM_COLOR`. New outputs `n34{,r}_{monthly,seasonal}_spread_synthetic.png` (4 new files; totals 7→9 per index, 14→18 overall). No `config.py` changes — reuses `load_nino34_verification()`'s existing `ssta`/`ssta_rel`/`obsa` and `rel_scaling_factor`. Verified: all 4 new figures render with the same MMM as the corresponding `*_spread.png`; RuntimeWarning count 25→27 (2 new, both benign all-NaN-slice from the seasonal quantile's NaN endpoint leads — no new degrees-of-freedom warnings from the covariance step). See Algorithm §4b, Constants, Edge Cases. | ✓ |
 | 2026-07-09 | **Added a multi-model mean (MMM) line to Compare/Spread/Mean.** New `MMM_COLOR = "0.75"` constant; each function collects the per-model arrays it already computes into a list during the loop, then plots `xr.concat(..., dim="model").mean("model")` after the loop with no explicit `zorder` (renders on top, drawn last) and `label="MMM"`. Also standardized `ax.legend(ncol=...)` to `2` in all three (was 1/2/3). **Also tried, then reverted same-session:** adding an 8th "MMM" panel to the Grid facet (`plot_grid`) by broadcasting the same MMM series across the `M` coordinate into a uniform-color block — the user judged this a bad idea and asked it removed; Grid stays at 7 panels, 8th `col_wrap` slot empty, as before. See Algorithm §4 and Constants. All 12 line-plot figures (`n34_*`/`n34r_*` compare/spread/mean, monthly/seasonal) regenerated; Grid figures unchanged from pre-session. | ✓ |

@@ -76,7 +76,7 @@ mamba run -n pangeo-local python scripts/skill.py
 
 | Script | Description | Notable args |
 |--------|-------------|--------------|
-| `latest_forecast.py` | Niño-3.4 (`n34_*`) and relative Niño-3.4 (`n34r_*`) plume figures (grid, compare, spread, mean; monthly + seasonal variants) from the local NMME zarr store, written to `plots/latest_forecast/` | `--init-date YYYY-MM[-DD]` — plot a specific past initialization (matched by calendar month) instead of the latest; output filenames get a `_<YYYY-MM>` suffix. See `specs/latest_forecast.md`. |
+| `latest_forecast.py` | Niño-3.4 (`n34_*`) and relative Niño-3.4 (`n34r_*`) plume figures (grid, compare, spread, spread-synthetic, mean; monthly + seasonal variants) from the local NMME zarr store, written to `plots/latest_forecast/`. Spread-synthetic draws 100 Gaussian scenarios from the historical MMM forecast-error covariance across leads (Barnston et al. 2015, *JAMC*, Fig. 9 — see Citation), a calibrated alternative to the raw (model-bias-dominated) ensemble-member spread. | `--init-date YYYY-MM[-DD]` — plot a specific past initialization (matched by calendar month) instead of the latest; output filenames get a `_<YYYY-MM>` suffix. See `specs/latest_forecast.md`. |
 | `skill.py` | Niño-3.4 forecast-skill heatmaps (anomaly correlation, MSESS) vs. ERSSTv5, by model + multi-model mean, start-month and target-month framings, 1991-2020, written to `plots/skill/` | none. See `specs/skill.md`. |
 | `rel_scaling_compare.py` | Exploratory/diagnostic (no production figures): evidence for the relative Niño-3.4 scaling factor's member-pooling choice — all 3 pairwise comparisons among per-member, ensemble-mean (flawed), and grand-mean (chosen since 2026-07-07) variance — via MSESS/AC, 1991-2020, written to `plots/rel_scaling_compare/` | none. See `specs/rel_scaling_compare.md`. |
 
@@ -116,10 +116,19 @@ formula is what it is (e.g., the split-climatology treatment of three models'
 ## Citation
 
 If this repository's methodology is useful in your work, please cite the
-paper that defines the relative Niño-3.4 index:
+relevant paper(s):
+
+The relative Niño-3.4 index:
 
 > L'Heureux, M. L., M. K. Tippett, M. C. Wheeler, H. Nguyen, S. Narsey,
 > N. Johnson, Z.-Z. Hu, A. B. Watkins, C. Lucas, C. Ganter, E. Becker,
 > W. Wang, and T. Di Liberto, 2024: A Relative Sea Surface Temperature Index
 > for Classifying ENSO Events in a Changing Climate. *J. Climate*, **37**,
 > 1197–1211, https://doi.org/10.1175/JCLI-D-23-0406.1
+
+The synthetic error-covariance forecast plume (`*_spread_synthetic.png`,
+`scripts/latest_forecast.py`):
+
+> Barnston, A. G., M. K. Tippett, H. M. van den Dool, and D. A. Unger, 2015:
+> Toward an Improved Multimodel ENSO Prediction. *J. Appl. Meteor. Climatol.*,
+> **54**, 1579–1595, https://doi.org/10.1175/JAMC-D-14-0188.1

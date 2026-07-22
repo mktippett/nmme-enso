@@ -54,6 +54,15 @@ import config
 
 MMM_COLOR = "0.75"
 
+# Synthetic-plume family (plot_spread_synthetic): equally-likely scenarios drawn
+# from a Gaussian with the historical MMM forecast-error covariance across leads,
+# added to the current MMM (Barnston, Tippett, van den Dool & Unger 2015, JAMC,
+# https://doi.org/10.1175/JAMC-D-14-0188.1, Fig. 9 lower panels).
+N_SYNTHETIC_MEMBERS = 100
+SYNTHETIC_SEED = 0
+SYNTHETIC_MEMBER_COLOR = "#7a86c8"
+SYNTHETIC_MMM_COLOR = "#1a1a1a"
+
 # Single-letter month initials, index 0 = January (the notebook's "m_str").
 SEASON_INITIALS = "JFMAMJJASOND"
 
@@ -121,6 +130,104 @@ def _index_transform(da, spec, seasonal, model, start_month):
         factor = factor_seasonal if seasonal else factor_monthly
         out = out * factor.sel(model=model, month=start_month)
     return out
+
+
+def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
+    """Draw N_SYNTHETIC_MEMBERS Gaussian scenarios from the historical MMM
+    forecast-error covariance across leads, centered on the current `mmm`.
+
+    Methodology (Barnston, Tippett, van den Dool & Unger 2015, JAMC, Fig. 9
+    lower panels; https://doi.org/10.1175/JAMC-D-14-0188.1): the MMM
+    forecast error over the 1991-2020 hindcast, stratified by the current
+    start month, has a 12x12 lead-by-lead covariance. Its diagonal is the
+    per-lead error variance (~SEE^2); its off-diagonals are the lead-to-lead
+    error correlation. Drawing from a multivariate normal with this
+    covariance and adding to the current MMM produces a plume whose width
+    and lead-to-lead coherence reflect actual out-of-sample skill, unlike
+    the raw ensemble-member spread (plot_spread), which mixes model-specific
+    dispersion with skill and is not calibrated.
+
+    The historical MMM forecast and the error reference are built in the
+    same transformed/scaled space as the plotted plume (seasonal rolling
+    mean, then — for the n34r index — the (model, month, L) variance-
+    matching factor), so the seasonal and n34r covariances are each
+    computed in that figure's own final units rather than derived from a
+    shared monthly draw. Both n34 and n34r verify against the observed
+    *absolute* Niño-3.4 (ds.obsa), consistent with rel_scaling_factor
+    (which calibrates the model relative index to observed absolute
+    Niño-3.4 variance), not the observed relative index (ds.obsa_rel).
+
+    The error is used demeaned (np.cov subtracts the sample mean per lead):
+    any residual MMM conditional bias is intentionally not injected into
+    the synthetic members — the plume stays centered on the current MMM.
+
+    Returns
+    -------
+    xarray.DataArray
+        dims (member, L), member = 0..N_SYNTHETIC_MEMBERS-1, L = mmm's full
+        lead coordinate (NaN at leads dropped for missing data, e.g. the
+        seasonal rolling mean's first/last lead).
+    """
+    avail_models = ds.model.values[avail]
+    year = ds.S.dt.year
+    hindcast = (year >= config.CLIM_START_YEAR) & (year <= config.CLIM_END_YEAR)
+
+    # The hindcast period is fixed to CLIM_START_YEAR-CLIM_END_YEAR (1991-2020)
+    # specifically because every NMME model has complete forecast coverage
+    # there (verified 360/360 starts per model at zero lead) — mean("model")
+    # below is skipna, so a model missing part of this window would silently
+    # drop out of some historical starts rather than raising; this guards
+    # that assumption instead of assuming it holds forever (e.g. if a future
+    # model with a shorter hindcast record is added to the store).
+    lead0 = ds[spec["var"]].sel(model=avail_models).isel(L=0).mean("M").where(hindcast, drop=True)
+    incomplete = lead0.isnull().any("S")
+    if bool(incomplete.any()):
+        bad = [str(m) for m in incomplete.where(incomplete, drop=True).model.values]
+        raise ValueError(
+            f"_synthetic_plume: model(s) {bad} lack complete "
+            f"{config.CLIM_START_YEAR}-{config.CLIM_END_YEAR} hindcast coverage; "
+            "the historical MMM error assumes every avail model contributes at "
+            "every hindcast start"
+        )
+
+    fc = ds[spec["var"]].sel(model=avail_models).mean("M").where(hindcast, drop=True)
+    obs = ds.obsa.where(hindcast, drop=True)
+    if seasonal:
+        fc = fc.rolling(L=3, center=True).mean()
+        obs = obs.rolling(L=3, center=True).mean()
+    scale = spec.get("scale")
+    if scale is not None:
+        factor_monthly, factor_seasonal = scale
+        factor = factor_seasonal if seasonal else factor_monthly
+        fc = fc * factor.sel(model=avail_models, month=fc.S.dt.month)
+    mmm_hist = fc.mean("model")  # (S, L)
+
+    err = mmm_hist - obs  # (S, L)
+    start_month_now = int(ds.S.isel(S=now_idx).dt.month)
+    err_month = err.where(err.S.dt.month == start_month_now, drop=True)  # (S~30, L)
+    err_valid = err_month.dropna("L", how="any")  # drop leads with any missing sample
+    valid_L = err_valid["L"]
+
+    n_dropped = mmm.sizes["L"] - valid_L.sizes["L"]
+    expected_dropped = 2 if seasonal else 0
+    if n_dropped != expected_dropped:
+        print(
+            f"  warning: _synthetic_plume ({spec['prefix']}, "
+            f"{'seasonal' if seasonal else 'monthly'}) dropped {n_dropped} "
+            f"lead(s), expected {expected_dropped}"
+        )
+
+    cov = np.cov(err_valid.transpose("S", "L").values, rowvar=False)  # (nL, nL)
+    rng = np.random.default_rng(SYNTHETIC_SEED)
+    draws = rng.multivariate_normal(np.zeros(cov.shape[0]), cov, size=N_SYNTHETIC_MEMBERS)
+
+    draws_da = xr.DataArray(
+        draws,
+        dims=("member", "L"),
+        coords={"L": valid_L, "member": np.arange(N_SYNTHETIC_MEMBERS)},
+    )
+    synthetic = draws_da + mmm.sel(L=valid_L)
+    return synthetic.reindex(L=mmm["L"])
 
 
 def _tight_xlim(ticks):
@@ -269,6 +376,55 @@ def plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=F
     print(f"  wrote {out}")
 
 
+def plot_spread_synthetic(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=False):
+    """Calibrated alternative to plot_spread: N_SYNTHETIC_MEMBERS Gaussian
+    scenarios drawn from the historical MMM forecast-error covariance across
+    leads, added to the current MMM (see _synthetic_plume), plus a 10th/90th
+    percentile envelope. Latest init only."""
+    l0 = 1 if seasonal else 0
+    var = spec["var"]
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+    leads = pd.date_range(start[now_idx], periods=12, freq="MS")
+    start_month_now = int(ds.S.isel(S=now_idx).dt.month)
+
+    mean_list = []
+    for im in avail:
+        model = ds.model.isel(model=im).item()
+        members = _index_transform(ds[var].isel(S=now_idx).isel(model=im), spec, seasonal, model, start_month_now)
+        mean_list.append(members.mean("M"))
+    mmm = xr.concat(mean_list, dim="model").mean("model")
+
+    synthetic = _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm)
+    pct = synthetic.quantile([0.1, 0.9], dim="member")
+    lo, hi = pct.sel(quantile=0.1), pct.sel(quantile=0.9)
+
+    ax.plot(leads, synthetic.transpose("L", "member"), lw=1, color=SYNTHETIC_MEMBER_COLOR, alpha=0.25)
+    ax.plot([], [], lw=1.5, color=SYNTHETIC_MEMBER_COLOR, alpha=0.6, label=f"synthetic members (n={N_SYNTHETIC_MEMBERS})")
+    ax.plot(leads, lo, "--", lw=2, color=SYNTHETIC_MMM_COLOR, alpha=0.8, label="10th/90th percentile")
+    ax.plot(leads, hi, "--", lw=2, color=SYNTHETIC_MMM_COLOR, alpha=0.8)
+    ax.plot(leads, mmm, lw=5, color=SYNTHETIC_MMM_COLOR, label="MMM", alpha=0.9)
+    ax.plot(leads[l0], mmm.isel(L=l0), "s", lw=4, color=SYNTHETIC_MMM_COLOR)
+
+    ticks = pd.date_range(start[now_idx], periods=12, freq="MS")
+    _set_xaxis(fig, ax, ticks, seasonal)
+    kind_label = "seasonal (3-month running mean)" if seasonal else "monthly"
+    ax.set_title(
+        f"NMME forecast {spec['name']} {kind_label} anomaly — synthetic plume "
+        f"(MMM + 1991-2020 error covariance)"
+    )
+    ax.legend(ncol=1)
+    ax.grid(visible=True)
+    fig.set_facecolor("white")
+    plt.tight_layout()
+
+    kind = "seasonal" if seasonal else "monthly"
+    out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_{kind}_spread_synthetic{date_suffix}.png"
+    fig.savefig(out, dpi=200, format="png")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+
 def plot_mean(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=False):
     """Ensemble-mean-only plume, latest init."""
     l0 = 1 if seasonal else 0
@@ -348,6 +504,7 @@ def main():
         for seasonal in (False, True):
             plot_compare(ds, start, avail, colors, spec, now_idx, prev_idx, date_suffix, seasonal=seasonal)
             plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=seasonal)
+            plot_spread_synthetic(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=seasonal)
             plot_mean(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=seasonal)
 
 
