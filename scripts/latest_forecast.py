@@ -107,8 +107,9 @@ def _resolve_init_idx(start, init_date):
 
 
 def _available_models(ds, spec, now_idx):
-    """Positional model indices with a non-NaN latest-init, zero-lead forecast."""
-    return np.where(~np.isnan(ds[spec["var"]].isel(S=now_idx, L=0).mean("M")))[0]
+    """Model names with a non-NaN latest-init, zero-lead forecast."""
+    ok = ds[spec["var"]].isel(S=now_idx, L=0).mean("M").notnull()
+    return ds.model.where(ok, drop=True).values
 
 
 def _index_transform(da, spec, seasonal, model, start_month):
@@ -168,7 +169,7 @@ def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
         lead coordinate (NaN at leads dropped for missing data, e.g. the
         seasonal rolling mean's first/last lead).
     """
-    avail_models = ds.model.values[avail]
+    avail_models = avail  # already model names (see _available_models)
     year = ds.S.dt.year
     hindcast = (year >= config.CLIM_START_YEAR) & (year <= config.CLIM_END_YEAR)
 
@@ -285,7 +286,7 @@ def plot_grid(ds, spec, now_idx, date_suffix):
     print(f"  wrote {out}")
 
 
-def plot_compare(ds, start, avail, plume_colors, spec, now_idx, prev_idx, date_suffix, seasonal=False):
+def plot_compare(ds, start, avail, model_colors, spec, now_idx, prev_idx, date_suffix, seasonal=False):
     """Ensemble-mean plume: latest init (solid) vs. previous init (dashed)."""
     l0 = 1 if seasonal else 0
     var = spec["var"]
@@ -298,16 +299,15 @@ def plot_compare(ds, start, avail, plume_colors, spec, now_idx, prev_idx, date_s
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
     prev_list, now_list = [], []
-    for im in avail:
-        model = ds.model.isel(model=im).item()
-        color = plume_colors[im]
+    for model in avail:
+        color = model_colors[model]
 
-        prev = _index_transform(ds[var].isel(S=prev_idx).mean("M").isel(model=im), spec, seasonal, model, start_month_prev)
+        prev = _index_transform(ds[var].isel(S=prev_idx).mean("M").sel(model=model), spec, seasonal, model, start_month_prev)
         ax.plot(leads_prev, prev, "--", lw=2, color=color, alpha=0.5)
         ax.plot(leads_prev[l0], prev.isel(L=l0), "o", lw=2, color=color, alpha=0.5)
         prev_list.append(prev)
 
-        now = _index_transform(ds[var].isel(S=now_idx).mean("M").isel(model=im), spec, seasonal, model, start_month_now)
+        now = _index_transform(ds[var].isel(S=now_idx).mean("M").sel(model=model), spec, seasonal, model, start_month_now)
         ax.plot(leads_now, now, lw=3, color=color, label=config.short_label(model), alpha=0.75)
         ax.plot(leads_now[l0], now.isel(L=l0), "s", lw=3, color=color, alpha=0.75)
         now_list.append(now)
@@ -335,7 +335,7 @@ def plot_compare(ds, start, avail, plume_colors, spec, now_idx, prev_idx, date_s
     print(f"  wrote {out_png}")
 
 
-def plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=False):
+def plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=False):
     """All members (thin) + ensemble mean (thick) per model, latest init only."""
     l0 = 1 if seasonal else 0
     var = spec["var"]
@@ -345,10 +345,9 @@ def plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=F
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
     mean_list = []
-    for im in avail:
-        model = ds.model.isel(model=im).item()
-        color = colors[im]
-        members = _index_transform(ds[var].isel(S=now_idx).isel(model=im), spec, seasonal, model, start_month_now)
+    for model in avail:
+        color = model_colors[model]
+        members = _index_transform(ds[var].isel(S=now_idx).sel(model=model), spec, seasonal, model, start_month_now)
         mean = members.mean("M")
 
         ax.plot(leads, members.T, lw=1.5, color=color, alpha=0.35)
@@ -376,7 +375,7 @@ def plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=F
     print(f"  wrote {out}")
 
 
-def plot_spread_synthetic(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=False):
+def plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=False):
     """Calibrated alternative to plot_spread: N_SYNTHETIC_MEMBERS Gaussian
     scenarios drawn from the historical MMM forecast-error covariance across
     leads, added to the current MMM (see _synthetic_plume), plus a 10th/90th
@@ -389,9 +388,8 @@ def plot_spread_synthetic(ds, start, avail, colors, spec, now_idx, date_suffix, 
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
     mean_list = []
-    for im in avail:
-        model = ds.model.isel(model=im).item()
-        members = _index_transform(ds[var].isel(S=now_idx).isel(model=im), spec, seasonal, model, start_month_now)
+    for model in avail:
+        members = _index_transform(ds[var].isel(S=now_idx).sel(model=model), spec, seasonal, model, start_month_now)
         mean_list.append(members.mean("M"))
     mmm = xr.concat(mean_list, dim="model").mean("model")
 
@@ -425,7 +423,7 @@ def plot_spread_synthetic(ds, start, avail, colors, spec, now_idx, date_suffix, 
     print(f"  wrote {out}")
 
 
-def plot_mean(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=False):
+def plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=False):
     """Ensemble-mean-only plume, latest init."""
     l0 = 1 if seasonal else 0
     var = spec["var"]
@@ -435,10 +433,9 @@ def plot_mean(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=Fal
     start_month_now = int(ds.S.isel(S=now_idx).dt.month)
 
     mean_list = []
-    for im in avail:
-        model = ds.model.isel(model=im).item()
-        color = colors[im]
-        mean = _index_transform(ds[var].isel(S=now_idx).mean("M").isel(model=im), spec, seasonal, model, start_month_now)
+    for model in avail:
+        color = model_colors[model]
+        mean = _index_transform(ds[var].isel(S=now_idx).mean("M").sel(model=model), spec, seasonal, model, start_month_now)
         ax.plot(leads, mean, lw=3, color=color, label=config.short_label(model), alpha=0.75)
         ax.plot(leads[l0], mean.isel(L=l0), "s", lw=3, color=color, alpha=0.75)
         mean_list.append(mean)
@@ -479,6 +476,9 @@ def main():
     prev_idx = now_idx - 1
     date_suffix = f"_{start[now_idx]:%Y-%m}" if args.init_date is not None else ""
     colors = _plume_colors()
+    # Keyed by model name (not position) so color assignment survives the
+    # per-index_spec `avail` subset/order — see _available_models.
+    model_colors = {name: colors[i] for i, name in enumerate(ds.model.values)}
     factor_monthly, factor_seasonal = config.rel_scaling_factor(ds)
 
     config.PLOTS_DIR_LATEST_FORECAST.mkdir(parents=True, exist_ok=True)
@@ -497,15 +497,15 @@ def main():
         avail = _available_models(ds, spec, now_idx)
         print(
             f"  available models (init {start[now_idx]:%Y-%m}, {spec['prefix']}): "
-            f"{[config.short_label(ds.model.isel(model=i).item()) for i in avail]}"
+            f"{[config.short_label(m) for m in avail]}"
         )
 
         plot_grid(ds, spec, now_idx, date_suffix)
         for seasonal in (False, True):
-            plot_compare(ds, start, avail, colors, spec, now_idx, prev_idx, date_suffix, seasonal=seasonal)
-            plot_spread(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=seasonal)
-            plot_spread_synthetic(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=seasonal)
-            plot_mean(ds, start, avail, colors, spec, now_idx, date_suffix, seasonal=seasonal)
+            plot_compare(ds, start, avail, model_colors, spec, now_idx, prev_idx, date_suffix, seasonal=seasonal)
+            plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
+            plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
+            plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
 
 
 if __name__ == "__main__":
