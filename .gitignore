@@ -44,6 +44,9 @@ env/
 # Copyrighted journal PDFs — cite in README instead (DOI), never commit
 papers/*.pdf
 
+# Beamer build output (regenerable from tex/slides.tex)
+tex/*.pdf
+
 # Disk cache for expensive climatology/scaling computations (config.py) —
 # regenerable, keyed on store fingerprints, not source of truth.
 cache/
