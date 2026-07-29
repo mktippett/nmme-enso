@@ -423,6 +423,116 @@ def plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_su
     print(f"  wrote {out}")
 
 
+def _historical_mmm(ds, avail, spec, seasonal):
+    """Fixed-model-set MMM forecast anomaly for every start S from
+    config.ANALYSIS_START_YEAR to the present.
+
+    Used as the ranking pool for the latest-forecast summary tables
+    (write_summary_tables). `avail` is the model set available at the
+    *current* latest forecast (see _available_models); using that same
+    fixed set across all of history keeps this MMM numerically identical
+    to the one already plotted in plot_mean/plot_compare for the current
+    forecast (rather than reproducing each historical year's actual,
+    varying NMME model roster).
+
+    Returns
+    -------
+    xarray.DataArray
+        dims (S, L), restricted to S.dt.year >= config.ANALYSIS_START_YEAR.
+    """
+    fc = ds[spec["var"]].sel(model=avail).mean("M")  # (model, S, L)
+    if seasonal:
+        fc = fc.rolling(L=3, center=True).mean()
+    scale = spec.get("scale")
+    if scale is not None:
+        factor_monthly, factor_seasonal = scale
+        factor = factor_seasonal if seasonal else factor_monthly
+        fc = fc * factor.sel(model=avail, month=fc.S.dt.month)
+    mmm = fc.mean("model")  # (S, L)
+    year = ds.S.dt.year
+    return mmm.where(year >= config.ANALYSIS_START_YEAR, drop=True)
+
+
+def _rank_at_lead(mmm_hist, start_month, current_S):
+    """Rank (1 = highest) of the current forecast's anomaly at each lead
+    among all historical MMM forecasts issued in the same calendar start
+    month, config.ANALYSIS_START_YEAR-present.
+
+    Returns
+    -------
+    tuple[xarray.DataArray, xarray.DataArray, int]
+        (current values, ranks), each dims (L,) — rank is NaN wherever the
+        current value itself is NaN (e.g. seasonal running-mean endpoints)
+        — and the ranking pool size (number of years).
+    """
+    pool = mmm_hist.where(mmm_hist.S.dt.month == start_month, drop=True)  # (S', L)
+    current = pool.sel(S=current_S)
+    rank = (pool > current).sum("S") + 1
+    rank = rank.where(current.notnull())
+    return current, rank, pool.sizes["S"]
+
+
+def write_summary_tables(ds, start, now_idx, index_specs, avail_by_prefix, date_suffix):
+    """Markdown table of the latest-forecast MMM anomaly (monthly and
+    seasonal target periods), with each value's rank (1 = highest) among
+    all MMM forecasts issued in the same calendar start month,
+    config.ANALYSIS_START_YEAR-present — see specs/latest_forecast.md §5.
+    """
+    start_month_now = int(ds.S.isel(S=now_idx).dt.month)
+    current_S = ds.S.isel(S=now_idx)
+    start_date = start[now_idx]
+    n_leads = ds.sizes["L"]
+
+    leads_monthly = pd.date_range(start_date, periods=n_leads, freq="MS")
+    leads_seasonal = leads_monthly[1:-1]
+
+    lines = [
+        f"# Latest-forecast MMM summary — start {start_date:%Y-%m}",
+        "",
+        f"Multi-model-mean (MMM) anomaly for the {n_leads}-lead forecast "
+        f"initialized {start_date:%B %Y}, for the standard Niño-3.4 index "
+        f"(n34) and the relative Niño-3.4 index (n34r). Below each anomaly, "
+        f"its rank (1 = highest) among all MMM forecasts issued in "
+        f"{start_date:%B}, {config.ANALYSIS_START_YEAR}-present, same "
+        f"target period. MMM uses the fixed model set available for the "
+        f"current forecast, applied consistently across all ranked years "
+        f"(same MMM definition as the plume figures).",
+        "",
+    ]
+
+    for seasonal, title in ((False, "Monthly"), (True, "Seasonal (3-month running mean)")):
+        col_labels = (
+            [_season_label(d.month) for d in leads_seasonal]
+            if seasonal
+            else [f"{d:%b %Y}" for d in leads_monthly]
+        )
+
+        rows = []
+        for spec in index_specs:
+            avail = avail_by_prefix[spec["prefix"]]
+            mmm_hist = _historical_mmm(ds, avail, spec, seasonal)
+            current, rank, pool_size = _rank_at_lead(mmm_hist, start_month_now, current_S)
+            if seasonal:
+                current = current.isel(L=slice(1, -1))
+                rank = rank.isel(L=slice(1, -1))
+            anom_row = ["–" if not np.isfinite(v) else f"{v:.2f}" for v in current.values]
+            rank_row = ["–" if not np.isfinite(r) else f"{int(r)}" for r in rank.values]
+            rows.append((f"{spec['prefix']} anom", anom_row))
+            rows.append((f"{spec['prefix']} rank (n={pool_size})", rank_row))
+
+        lines.append(f"## {title}")
+        lines.append("")
+        lines.append("| | " + " | ".join(col_labels) + " |")
+        lines.append("|---|" + "---|" * len(col_labels))
+        for label, vals in rows:
+            lines.append(f"| {label} | " + " | ".join(vals) + " |")
+        lines.append("")
+
+    out = config.PLOTS_DIR_LATEST_FORECAST / f"latest_forecast_summary{date_suffix}.md"
+    out.write_text("\n".join(lines) + "\n")
+    print(f"  wrote {out}")
+
+
 def plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=False):
     """Ensemble-mean-only plume, latest init."""
     l0 = 1 if seasonal else 0
@@ -493,8 +603,10 @@ def main():
         },
     ]
 
+    avail_by_prefix = {}
     for spec in index_specs:
         avail = _available_models(ds, spec, now_idx)
+        avail_by_prefix[spec["prefix"]] = avail
         print(
             f"  available models (init {start[now_idx]:%Y-%m}, {spec['prefix']}): "
             f"{[config.short_label(m) for m in avail]}"
@@ -506,6 +618,8 @@ def main():
             plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
             plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
             plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
+
+    write_summary_tables(ds, start, now_idx, index_specs, avail_by_prefix, date_suffix)
 
 
 if __name__ == "__main__":

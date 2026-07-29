@@ -90,6 +90,7 @@ year-month, not the value typed on the command line.
 | `plots/latest_forecast/n34r_seasonal_spread.png` | Same as `n34_seasonal_spread.png`, relative index | PNG, dpi=200 |
 | `plots/latest_forecast/n34r_seasonal_spread_synthetic.png` | Same as `n34_seasonal_spread_synthetic.png`, relative index (own seasonal scaling factor, verified against `ds.obsa`) | PNG, dpi=200 |
 | `plots/latest_forecast/n34r_seasonal_mean.png` | Same as `n34_seasonal_mean.png`, relative index | PNG |
+| `plots/latest_forecast/latest_forecast_summary.md` | Monthly and seasonal MMM anomaly tables for both indices (n34, n34r), each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, `ANALYSIS_START_YEAR`-present — see §5 | Markdown |
 
 ## Algorithm
 
@@ -401,6 +402,55 @@ where inter-model separation — e.g. GEOSS2S trending to ~4.7°C vs. CanESM5 to
 typically narrower at short leads. (b) No bias correction is applied — the
 plume centers on the current (as-is) MMM, not a debiased one.
 
+### 5. Summary tables (`write_summary_tables`)
+
+After the grid/compare/spread/mean figures are written for both index specs,
+`main()` calls `write_summary_tables(ds, start, now_idx, index_specs,
+avail_by_prefix, date_suffix)`, where `avail_by_prefix` collects each spec's
+`avail` (the same fixed model set used for that spec's figures) during the
+existing per-spec loop. Produces one markdown file with two tables —
+monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
+`n34r rank`) and columns = target period (see Outputs).
+
+1. **Historical MMM pool** (`_historical_mmm(ds, avail, spec, seasonal)`):
+   `fc = ds[spec['var']].sel(model=avail).mean('M')` → `(model, S, L)`, over
+   **all** available `S`, not just the hindcast period — unlike
+   `_synthetic_plume`'s 1991-2020-only `fc`. If `seasonal`, roll first
+   (`L=3, center=True`); then, for a spec with a `scale`, multiply by
+   `factor.sel(model=avail, month=fc.S.dt.month)` (`factor_seasonal` if
+   seasonal else `factor_monthly`) — same order as `_index_transform`/
+   `_synthetic_plume`. `mmm = fc.mean('model')` → `(S, L)`, then restricted
+   to `S.dt.year >= config.ANALYSIS_START_YEAR` (1991). Using the **same
+   fixed `avail` model set for every historical year** (rather than each
+   year's actual, varying NMME roster) keeps this MMM numerically identical
+   to the "MMM" line already plotted in Compare/Spread/Mean for the current
+   forecast — a deliberate choice (confirmed with the user) over
+   reproducing each year's true historical model set.
+2. **Rank** (`_rank_at_lead(mmm_hist, start_month, current_S)`): pool =
+   `mmm_hist` restricted to `S.dt.month == start_month` (the current
+   forecast's init month) → `(S', L)`, `S'` spanning
+   `ANALYSIS_START_YEAR`-present (pool size `n` printed/shown per row).
+   `current = pool.sel(S=current_S)` → `(L,)`. `rank = (pool >
+   current).sum('S') + 1` — 1 when nothing in the pool exceeds the current
+   value (i.e. the current forecast is the warmest on record for that start
+   month/lead); NaN comparisons contribute 0 (don't inflate the count).
+   `rank` is then masked to NaN wherever `current` itself is NaN (seasonal
+   endpoint leads) via `rank.where(current.notnull())` — otherwise a NaN
+   current value would still get a defined (meaningless) rank since
+   `pool > NaN` is elementwise `False` everywhere.
+3. **Column labels**: monthly = `f"{d:%b %Y}"` for each of the `n_leads`
+   `pd.date_range(start_date, periods=n_leads, freq='MS')` entries (year
+   included since a mid-year start's 12 leads can cross a calendar-year
+   boundary); seasonal = `_season_label(d.month)` for `leads_monthly[1:-1]`
+   (the two rolling-mean endpoint leads dropped, same slicing as
+   `_set_xaxis`'s seasonal tick trimming — see §4a).
+4. **Row values**: anomaly formatted `f"{v:.2f}"` (`"–"` if NaN); rank
+   formatted as a plain integer (`"–"` if NaN, i.e. the seasonal endpoints).
+   Rank row label includes the pool size, e.g. `"n34 rank (n=36)"` — shown
+   per index since `avail` (and therefore pool completeness) can differ
+   between `n34` and `n34r` if a model has valid `ssta` but not
+   `ssta_rel` data (or vice versa) at the current init.
+
 ## Constants & Scientific Rationale
 
 | Name | Value | Rationale |
@@ -556,8 +606,28 @@ for f in [
     "n34r_seasonal_spread.png",
     "n34r_seasonal_spread_synthetic.png",
     "n34r_seasonal_mean.png",
+    "latest_forecast_summary.md",
 ]:
     assert (config.PLOTS_DIR_LATEST_FORECAST / f).exists(), f"missing output {f}"
+
+# Summary-table rank sanity: the current forecast's own historical MMM value
+# must rank first among a same-value one-element pool, and the pool must
+# span ANALYSIS_START_YEAR-present.
+from latest_forecast import _historical_mmm, _rank_at_lead
+
+now_idx = _resolve_init_idx(start, None)
+spec_n34 = {"var": "ssta", "prefix": "n34", "name": "Nino 3.4", "scale": None}
+avail = np.where(~np.isnan(ds[spec_n34["var"]].isel(S=now_idx, L=0).mean("M")))[0]
+avail_models = ds.model.isel(model=avail).values
+mmm_hist = _historical_mmm(ds, avail_models, spec_n34, seasonal=False)
+assert int(mmm_hist.S.dt.year.min()) >= config.ANALYSIS_START_YEAR, \
+    "historical MMM pool should be restricted to ANALYSIS_START_YEAR-present"
+start_month_now = int(ds.S.isel(S=now_idx).dt.month)
+current_S = ds.S.isel(S=now_idx)
+current, rank, pool_size = _rank_at_lead(mmm_hist, start_month_now, current_S)
+assert bool((rank >= 1).where(rank.notnull(), True).all()), "rank should be >= 1 wherever defined"
+assert pool_size == int((mmm_hist.S.dt.month == start_month_now).sum()), \
+    "pool size should equal the count of historical starts sharing the current init month"
 
 # Synthetic-plume sanity: same-seed rerun reproduces byte-identical draws.
 from latest_forecast import (
@@ -598,4 +668,5 @@ print("Verification passed.")
 | 2026-07-07 | `config.ERSSTV5_NC` default changed to the repo-local `OBS_DIR / "ERSSTv5.sst.mnmean.nc"` (see `specs/skill.md` same-date row for details). `rel_scaling_factor` 1991-2020 range verified unchanged ([0.51, 2.30] monthly); figures regenerated. | ✓ |
 | 2026-07-22 | **Hardened the synthetic family's hindcast-period assumption.** Confirmed empirically (360/360 starts per model at zero lead) that all 7 current NMME models have complete 1991-2020 coverage, which is *why* that period was chosen for the error covariance, not just because it's the standard climatology window. Added an explicit check in `_synthetic_plume` that raises `ValueError` if any `avail_models` member has incomplete zero-lead coverage over that period, rather than letting `mean('model')`'s skipna behavior silently shrink the effective model set for part of the hindcast. No change to computed output (all models currently pass). See Algorithm §4b and Edge Cases. | ✓ |
 | 2026-07-22 | **Added the synthetic error-covariance spread family** (`plot_spread_synthetic`, `_synthetic_plume`), implementing Barnston, Tippett, van den Dool & Unger (2015, *J. Appl. Meteor. Climatol.*, **54**, 1579–1595, https://doi.org/10.1175/JAMC-D-14-0188.1, Fig. 9 lower panels): 100 Gaussian scenarios drawn from the historical (1991-2020) MMM forecast-error covariance across leads, stratified by the current start month, added to the current MMM. Both n34 and n34r verify against observed absolute Niño-3.4 (`ds.obsa`), per direct author request — not `ds.obsa_rel`. New constants `N_SYNTHETIC_MEMBERS=100`, `SYNTHETIC_SEED=0`, `SYNTHETIC_MEMBER_COLOR`, `SYNTHETIC_MMM_COLOR`. New outputs `n34{,r}_{monthly,seasonal}_spread_synthetic.png` (4 new files; totals 7→9 per index, 14→18 overall). No `config.py` changes — reuses `load_nino34_verification()`'s existing `ssta`/`ssta_rel`/`obsa` and `rel_scaling_factor`. Verified: all 4 new figures render with the same MMM as the corresponding `*_spread.png`; RuntimeWarning count 25→27 (2 new, both benign all-NaN-slice from the seasonal quantile's NaN endpoint leads — no new degrees-of-freedom warnings from the covariance step). See Algorithm §4b, Constants, Edge Cases. | ✓ |
+| 2026-07-29 | **Added the summary-table output** (`write_summary_tables`, `_historical_mmm`, `_rank_at_lead`): `plots/latest_forecast/latest_forecast_summary.md`, monthly + seasonal MMM anomaly tables for both indices, each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, `ANALYSIS_START_YEAR`-present. Design decisions confirmed with the user: one combined table per kind (4 rows: `n34`/`n34r` anom/rank) rather than 4 separate tables; ranking pool uses the **fixed model set from the current forecast** applied across all historical years (matching the plotted MMM line), not each year's true historical roster. See Algorithm §5. | ✓ |
 | 2026-07-09 | **Added a multi-model mean (MMM) line to Compare/Spread/Mean.** New `MMM_COLOR = "0.75"` constant; each function collects the per-model arrays it already computes into a list during the loop, then plots `xr.concat(..., dim="model").mean("model")` after the loop with no explicit `zorder` (renders on top, drawn last) and `label="MMM"`. Also standardized `ax.legend(ncol=...)` to `2` in all three (was 1/2/3). **Also tried, then reverted same-session:** adding an 8th "MMM" panel to the Grid facet (`plot_grid`) by broadcasting the same MMM series across the `M` coordinate into a uniform-color block — the user judged this a bad idea and asked it removed; Grid stays at 7 panels, 8th `col_wrap` slot empty, as before. See Algorithm §4 and Constants. All 12 line-plot figures (`n34_*`/`n34r_*` compare/spread/mean, monthly/seasonal) regenerated; Grid figures unchanged from pre-session. | ✓ |
