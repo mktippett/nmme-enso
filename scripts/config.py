@@ -282,6 +282,38 @@ def _forecast_anomaly(sst_da, target):
     return xr.concat([ssta_two_clim, ssta_one_clim], dim="model")
 
 
+def _nan_start_report(ds):
+    """Summarize interior all-NaN starts per model, for the load banner.
+
+    A start is reported only when it is all-NaN across (M, L) *and* falls
+    between that model's own first and last valid start — a genuine hole
+    in the model's coverage, i.e. data that IRIDL had not posted when the
+    archive was fetched. The leading/trailing NaN padding that the merged
+    S union creates for models with shorter records (or that have not yet
+    issued the newest start) is not a defect and is excluded.
+
+    These holes are a source-data condition owned by ~/claude/NMME-zarr;
+    they are reported here, never masked or worked around. Backfill is
+    manual once the data appears upstream — see that project's README.
+    """
+    valid = ds.sst.notnull().any(("M", "L"))  # (model, S)
+    parts = []
+    for model in ds.model.values:
+        v = valid.sel(model=model)
+        if not bool(v.any()):
+            parts.append(f"{model}: no valid starts")
+            continue
+        span = v.S.where(v, drop=True).values
+        interior = (ds.S >= span[0]) & (ds.S <= span[-1])
+        gaps = ds.S.where(interior & ~v, drop=True)
+        if gaps.size:
+            labels = ", ".join(
+                f"{t.dt.year.item():04d}-{t.dt.month.item():02d}" for t in gaps
+            )
+            parts.append(f"{model}: {labels}")
+    return "; ".join(parts) if parts else "none"
+
+
 def load_nino34_ssta(store=None, use_cache=True):
     """Load the NMME Niño-3.4 index and compute forecast anomalies (ssta).
 
@@ -356,6 +388,7 @@ def load_nino34_ssta(store=None, use_cache=True):
                 f"  load_nino34_ssta: cache hit ({cache_nc.name}) "
                 f"models={list(ds.model.values)} shape={dict(ds.ssta.sizes)}"
             )
+            print(f"  load_nino34_ssta: interior all-NaN starts: {_nan_start_report(ds)}")
             return ds
         print(f"  load_nino34_ssta: cache stale ({cache_nc.name}), recomputing")
 
@@ -400,6 +433,7 @@ def load_nino34_ssta(store=None, use_cache=True):
         f"two_clim={two_clim_models} split={TWO_CLIM_SPLIT} "
         f"climo={CLIM_START_YEAR}-{CLIM_END_YEAR}"
     )
+    print(f"  load_nino34_ssta: interior all-NaN starts: {_nan_start_report(ds)}")
 
     if use_cache:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)

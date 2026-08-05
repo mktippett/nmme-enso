@@ -124,6 +124,11 @@ future script needing the Niño-3.4 index/anomaly) and does the following,
    anomaly. Because both terms are anomalies against the same monthly
    climatology, the (differing) seasonal cycles of the two regions cancel
    rather than leaking into `ssta_rel`.
+6. Print the load banner (per the project's print-on-load pattern),
+   including a line from `config._nan_start_report(ds)` listing any
+   **interior all-NaN starts** per model — see Edge Cases. The banner is
+   printed on both the cache-hit and the recompute path, so a source-data
+   gap stays visible even when the expensive read is skipped.
 
 ### 1a. Model-relative scaling factor
 
@@ -483,6 +488,21 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
 - **Model missing its selected-init forecast** (e.g. delayed release, or a
   model not yet contributing at an older `--init-date`): excluded from all
   figures via the `avail` filter rather than plotted with NaN gaps.
+- **Interior all-NaN starts (source-data gaps)**: a model can carry an `S`
+  value whose `sst` is all-NaN across every member and lead, because IRIDL
+  exposed the start before the modeling center posted the data.
+  `config._nan_start_report()` reports these in the load banner; nothing
+  masks or repairs them here, per the project's fix-the-source rule —
+  backfill is a manual `--recheck-n` in `~/claude/NMME-zarr` (see that
+  project's README). The report counts a start only when it is all-NaN
+  **and** interior to that model's own first/last valid start: the merged
+  `S` union is longer than any single model's record, so leading/trailing
+  NaN padding — including a model that simply has not issued the newest
+  init yet — is normal and must not be reported as a defect. Observed
+  2026-08-05: `GFDL-SPEAR` has 9 interior gaps between 2025-06 and 2026-06
+  (GFDL posts SPEAR only every second or third month); `COLA-RSMAS-CESM1`
+  and `GFDL-SPEAR` are both absent from the 2026-08 init, which is
+  trailing padding and correctly *not* reported.
 - **`--init-date` matches no init in the store**: `_resolve_init_idx` raises
   `ValueError` naming the requested date and the store's full
   `start[0]:start[-1]` range, rather than silently falling back to the
@@ -670,3 +690,4 @@ print("Verification passed.")
 | 2026-07-22 | **Added the synthetic error-covariance spread family** (`plot_spread_synthetic`, `_synthetic_plume`), implementing Barnston, Tippett, van den Dool & Unger (2015, *J. Appl. Meteor. Climatol.*, **54**, 1579–1595, https://doi.org/10.1175/JAMC-D-14-0188.1, Fig. 9 lower panels): 100 Gaussian scenarios drawn from the historical (1991-2020) MMM forecast-error covariance across leads, stratified by the current start month, added to the current MMM. Both n34 and n34r verify against observed absolute Niño-3.4 (`ds.obsa`), per direct author request — not `ds.obsa_rel`. New constants `N_SYNTHETIC_MEMBERS=100`, `SYNTHETIC_SEED=0`, `SYNTHETIC_MEMBER_COLOR`, `SYNTHETIC_MMM_COLOR`. New outputs `n34{,r}_{monthly,seasonal}_spread_synthetic.png` (4 new files; totals 7→9 per index, 14→18 overall). No `config.py` changes — reuses `load_nino34_verification()`'s existing `ssta`/`ssta_rel`/`obsa` and `rel_scaling_factor`. Verified: all 4 new figures render with the same MMM as the corresponding `*_spread.png`; RuntimeWarning count 25→27 (2 new, both benign all-NaN-slice from the seasonal quantile's NaN endpoint leads — no new degrees-of-freedom warnings from the covariance step). See Algorithm §4b, Constants, Edge Cases. | ✓ |
 | 2026-07-29 | **Added the summary-table output** (`write_summary_tables`, `_historical_mmm`, `_rank_at_lead`): `plots/latest_forecast/latest_forecast_summary.md`, monthly + seasonal MMM anomaly tables for both indices, each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, `ANALYSIS_START_YEAR`-present. Design decisions confirmed with the user: one combined table per kind (4 rows: `n34`/`n34r` anom/rank) rather than 4 separate tables; ranking pool uses the **fixed model set from the current forecast** applied across all historical years (matching the plotted MMM line), not each year's true historical roster. See Algorithm §5. | ✓ |
 | 2026-07-09 | **Added a multi-model mean (MMM) line to Compare/Spread/Mean.** New `MMM_COLOR = "0.75"` constant; each function collects the per-model arrays it already computes into a list during the loop, then plots `xr.concat(..., dim="model").mean("model")` after the loop with no explicit `zorder` (renders on top, drawn last) and `label="MMM"`. Also standardized `ax.legend(ncol=...)` to `2` in all three (was 1/2/3). **Also tried, then reverted same-session:** adding an 8th "MMM" panel to the Grid facet (`plot_grid`) by broadcasting the same MMM series across the `M` coordinate into a uniform-color block — the user judged this a bad idea and asked it removed; Grid stays at 7 panels, 8th `col_wrap` slot empty, as before. See Algorithm §4 and Constants. All 12 line-plot figures (`n34_*`/`n34r_*` compare/spread/mean, monthly/seasonal) regenerated; Grid figures unchanged from pre-session. | ✓ |
+| 2026-08-05 | **Added source-gap reporting to the load banner.** New `config._nan_start_report(ds)`, called from both print paths of `config.load_nino34_ssta` (cache-hit and recompute). Reports, per model, starts that are all-NaN across `(M, L)` *and* interior to that model's own first/last valid start — the interior test is what distinguishes a real gap from the leading/trailing NaN padding created by the merged `S` union (models with shorter records, or that have not yet issued the newest init). Diagnostic output only: no change to any figure, table, or computed value. Motivated by a `NASA-GEOSS2S` init that was silently absent from the plumes because the upstream zarr update had no-opped on a stale IRIDL Squid cache entry; the banner immediately surfaced a second, unrelated condition — 9 interior all-NaN `GFDL-SPEAR` starts between 2025-06 and 2026-06. See Algorithm §1 step 6 and Edge Cases. | ✓ |
