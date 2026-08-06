@@ -9,7 +9,7 @@ ERSSTv5.
 
 ## Computing relative Niño-3.4 in models
 
-The relative Niño-3.4 index ([L'Heureux, Tippett, et al.
+The relative Niño-3.4 index ([L'Heureux et al.
 2024](https://doi.org/10.1175/JCLI-D-23-0406.1)) subtracts the tropical-mean
 (20°S–20°N) SST anomaly from the Niño-3.4 anomaly — removing the common
 warming signal — and rescales so familiar amplitude thresholds keep their
