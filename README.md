@@ -45,10 +45,13 @@ initializations arrive):
 
 ![Relative Niño-3.4 seasonal forecast plume](plots/latest_forecast/n34r_seasonal_spread.png)
 
-> **Known data issue:** IRI is currently serving two corrupt COLA-RSMAS-CESM1
-> ensemble members (2026-03 start, member 5; 2026-07 start, member 1),
-> reported upstream 2026-07-07. The plume above may show a visible outlier
-> member until IRI corrects the source data and the figure is regenerated.
+> **Known data issue:** IRI served two corrupt COLA-RSMAS-CESM1 ensemble
+> members (2026-03 start, member 5; 2026-07 start, member 1) — flat or
+> inverted trajectories inconsistent with the rest of the ensemble — reported
+> upstream 2026-07-07 and still present in the archived data as of 2026-08-06.
+> Neither start is part of the plume above (now at the 2026-08 init, whose
+> members are clean); the defect resurfaces only if one of those two starts is
+> replotted directly, e.g. via `--init-date 2026-07`.
 
 ## Quickstart
 

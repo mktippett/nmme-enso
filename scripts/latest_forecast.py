@@ -231,6 +231,37 @@ def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
     return synthetic.reindex(L=mmm["L"])
 
 
+def _fmt_init(date):
+    """Nominal initialization date for display, e.g. 'Aug 1, 2026'."""
+    return pd.Timestamp(date).strftime("%b %-d, %Y")
+
+
+_INIT_BBOX = dict(boxstyle="round", facecolor="white", edgecolor="0.6", alpha=0.85)
+
+
+def _init_textbox(ax, text):
+    """Small boxed annotation (upper-left, axes fraction) carrying the
+    initialization date, kept out of ax.set_title() so titles stay short."""
+    ax.text(
+        0.02, 0.98, text, transform=ax.transAxes, ha="left", va="top",
+        fontsize=10, bbox=_INIT_BBOX,
+    )
+
+
+def _place_grid_init(fg, text):
+    """Write the init-date box into the grid's first unused facet slot
+    (col_wrap leaves one empty whenever the model count isn't a multiple of
+    the wrap width); fall back to a suptitle if the grid is exactly full."""
+    empty_idxs = [i for i, nd in enumerate(fg.name_dicts.flat) if nd is None]
+    if not empty_idxs:
+        fg.fig.suptitle(text, x=0.42, y=1.03, fontsize=14, fontweight="bold")
+        return
+    ax = fg.axs.flat[empty_idxs[0]]
+    ax.set_visible(True)
+    ax.set_axis_off()
+    ax.text(0.5, 0.5, text, transform=ax.transAxes, ha="center", va="center", fontsize=13, fontweight="bold", bbox=_INIT_BBOX)
+
+
 def _tight_xlim(ticks):
     """xlim spanning exactly the tick range, padded by half a time step on each side."""
     half_step = (ticks[1] - ticks[0]) / 2
@@ -257,7 +288,7 @@ def _set_xaxis(fig, ax, ticks, seasonal):
     ax.set_xlim(_tight_xlim(ticks))
 
 
-def plot_grid(ds, spec, now_idx, date_suffix):
+def plot_grid(ds, start, spec, now_idx, date_suffix):
     """Per-model facet grid of the latest forecast anomaly (lead x member)."""
     da = ds[spec["var"]].isel(S=now_idx)
     scale = spec.get("scale")
@@ -277,8 +308,7 @@ def plot_grid(ds, spec, now_idx, date_suffix):
     fg = da.plot(col="model", col_wrap=4)
     fig = fg.fig
     fig.set_facecolor("white")
-    start_date = str(ds.S.isel(S=now_idx).values)[:10]
-    fig.suptitle(f"Start = {start_date}", x=0.42, y=1.03, fontsize=14, fontweight="bold")
+    _place_grid_init(fg, f"Init:\n{_fmt_init(start[now_idx])}")
 
     out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_monthly_grid{date_suffix}.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
@@ -323,6 +353,7 @@ def plot_compare(ds, start, avail, model_colors, spec, now_idx, prev_idx, date_s
     _set_xaxis(fig, ax, ticks, seasonal)
     kind_label = "seasonal (3-month running mean)" if seasonal else "monthly"
     ax.set_title(f"{spec['name']} {kind_label} anomaly (1991-2020 climatology mostly)")
+    _init_textbox(ax, f"Init: {_fmt_init(start[prev_idx])} (dashed)\n→ {_fmt_init(start[now_idx])} (solid)")
     ax.legend(ncol=2)
     ax.grid(visible=True)
     fig.set_facecolor("white")
@@ -363,6 +394,7 @@ def plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seas
     _set_xaxis(fig, ax, ticks, seasonal)
     kind_label = "seasonal (3-month running mean)" if seasonal else "monthly"
     ax.set_title(f"NMME forecast {spec['name']} {kind_label} anomaly (1991-2020 climatology)")
+    _init_textbox(ax, f"Init: {_fmt_init(start[now_idx])}")
     ax.legend(ncol=2)
     ax.grid(visible=True)
     fig.set_facecolor("white")
@@ -411,6 +443,7 @@ def plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_su
         f"NMME forecast {spec['name']} {kind_label} anomaly — synthetic plume "
         f"(MMM + 1991-2020 error covariance)"
     )
+    _init_textbox(ax, f"Init: {_fmt_init(start[now_idx])}")
     ax.legend(ncol=1)
     ax.grid(visible=True)
     fig.set_facecolor("white")
@@ -558,13 +591,15 @@ def plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, season
     _set_xaxis(fig, ax, ticks, seasonal)
     kind_label = "seasonal (3-month running mean)" if seasonal else "monthly"
     ax.set_title(f"{spec['name']} {kind_label} anomaly (1991-2020 climatology)")
+    _init_textbox(ax, f"Init: {_fmt_init(start[now_idx])}")
     ax.legend(ncol=2)
     ax.grid(visible=True)
     fig.set_facecolor("white")
+    plt.tight_layout()
 
     kind = "seasonal" if seasonal else "monthly"
     out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_{kind}_mean{date_suffix}.png"
-    fig.savefig(out)
+    fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out}")
 
@@ -612,7 +647,7 @@ def main():
             f"{[config.short_label(m) for m in avail]}"
         )
 
-        plot_grid(ds, spec, now_idx, date_suffix)
+        plot_grid(ds, start, spec, now_idx, date_suffix)
         for seasonal in (False, True):
             plot_compare(ds, start, avail, model_colors, spec, now_idx, prev_idx, date_suffix, seasonal=seasonal)
             plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)

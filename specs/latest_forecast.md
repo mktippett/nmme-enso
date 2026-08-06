@@ -231,24 +231,32 @@ rather than plotted as a gap.
 - **Grid** — `ds[spec['var']].isel(S=now_idx)` (scaled by
   `factor_monthly.sel(month=start_month)` first, for the relative index,
   where `start_month` is the selected init's calendar month),
-  `.plot(col='model', col_wrap=4)`;
-  suptitle shows the init date (`ds.S.isel(S=now_idx)`, `str(...)[:10]`).
-  Monthly only — there is no seasonal grid variant. Before plotting, the
-  array is renamed to `spec['prefix']` and given fresh `attrs = {"units":
-  "degC"}` — replacing (not patching) any inherited `long_name`/
-  `standard_name` from the raw store field or the ERSSTv5 scale factor,
-  which otherwise silently wins over the array name in xarray's auto
-  colorbar label.
+  `.plot(col='model', col_wrap=4)`. Monthly only — there is no seasonal grid
+  variant. Before plotting, the array is renamed to `spec['prefix']` and
+  given fresh `attrs = {"units": "degC"}` — replacing (not patching) any
+  inherited `long_name`/`standard_name` from the raw store field or the
+  ERSSTv5 scale factor, which otherwise silently wins over the array name in
+  xarray's auto colorbar label. The init date (`_fmt_init(start[now_idx])`,
+  e.g. "Aug 1, 2026") is written via `_place_grid_init`, which finds the
+  facet grid's first unused `col_wrap` slot (`fg.name_dicts.flat[i] is
+  None` — one is guaranteed whenever the model count isn't a multiple of 4;
+  currently 7 models in an 8-slot 2x4 grid leaves exactly one) and draws a
+  boxed, centered label there instead of adding a suptitle. If the grid is
+  ever exactly full (model count a multiple of 4, no empty slot), it falls
+  back to a `fig.suptitle`.
 - **Compare** — per model in `avail`, two plumes over 12 leads each:
   previous init (`S=prev_idx`, dashed, circle marker) and selected init
   (`S=now_idx`, solid, square marker). X-axis is `pd.date_range(start[i],
   periods=12, freq='MS')` per init. Colors from the plume-specific override
   (see Constants). Legend labels via `config.short_label()`. Title uses
-  `spec['name']`.
+  `spec['name']`; the init dates for both plumes (`_fmt_init(start[prev_idx])
+  (dashed) → _fmt_init(start[now_idx]) (solid)`) are a separate boxed
+  annotation (`_init_textbox`, upper-left in axes fraction coordinates) kept
+  out of the title so the title itself stays one line.
 - **Spread** — selected init (`now_idx`) only; all ensemble members thin
   (alpha 0.35) + ensemble mean thick (alpha 0.85). Same color override array
   as Compare (indexed by the same positional model index), not the plain
-  default cycle.
+  default cycle. Init date shown via the same `_init_textbox` annotation.
 - **Spread-synthetic** — selected init (`now_idx`) only; the current MMM
   (built identically to Spread's, via the same per-model `_index_transform`
   loop) plus `N_SYNTHETIC_MEMBERS=100` Gaussian scenarios drawn from the
@@ -257,9 +265,24 @@ rather than plotted as a gap.
   covariance/draw procedure. Uses its own colors
   (`SYNTHETIC_MEMBER_COLOR`/`SYNTHETIC_MMM_COLOR`, not the Compare/Spread/Mean
   override array or `MMM_COLOR`) since `MMM_COLOR = "0.75"` would be
-  invisible against the synthetic member cloud.
+  invisible against the synthetic member cloud. Init date shown via the same
+  `_init_textbox` annotation.
 - **Mean** — selected init (`now_idx`) only, ensemble-mean lines. Same color
-  override array as Compare/Spread.
+  override array as Compare/Spread. Init date shown via the same
+  `_init_textbox` annotation.
+- **Init-date annotation** (`_init_textbox`, `_place_grid_init`,
+  `_fmt_init`) — every figure in this family carries the *nominal*
+  initialization date (first of the init month, e.g. "Aug 1, 2026") rather
+  than the raw `ds.S` value, since NMME store `S` values already resolve to
+  the first of the month after 360-day-to-Gregorian conversion for every
+  model checked so far (`_fmt_init` just formats `start[idx]`, it does not
+  re-derive or round a mid-month value). It is deliberately kept out of
+  `ax.set_title()`/`fig.suptitle()` — appending it there produced a
+  two-line title on Compare/Spread/Spread-synthetic/Mean — and rendered
+  instead as a small boxed annotation (`bbox=dict(boxstyle="round",
+  facecolor="white", edgecolor="0.6", alpha=0.85)`) placed upper-left in
+  axes-fraction coordinates for the line plots, or in the Grid figure's
+  empty facet slot (see Grid bullet above).
 - **Multi-model mean (MMM)** — Compare, Spread, and Mean each also plot an
   equal-weight mean across `avail` models (`MMM_COLOR = "0.75"`, light gray),
   computed from the same per-model ensemble-mean arrays already plotted for
@@ -672,6 +695,7 @@ print("Verification passed.")
 
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
+| 2026-08-06 | Added the nominal-init-date annotation (`_fmt_init`, `_init_textbox`, `_place_grid_init`) to all Grid/Compare/Spread/Spread-synthetic/Mean figures. First pass appended a second title line to each `ax.set_title()`/`fig.suptitle()`; per feedback the date moved out of the title into a boxed annotation (upper-left in axes-fraction coordinates for the line plots, the Grid figure's empty `col_wrap` facet slot for Grid) so titles stay one line. `plot_grid`'s signature gained a `start` parameter. Also corrected the README's known-data-issue callout (stale reference to a specific past plume screenshot) — no code change. | ✓ |
 | 2026-07-06 | Initial script + `config.load_nino34_ssta()` written | ✓ |
 | 2026-07-06 | Dropped duplicate `.pdf` output for the compare figure (PNG only) | ✓ |
 | 2026-07-06 | Added seasonal (3-month running mean) variants of compare/spread/mean; renamed all outputs to `n34_{monthly,seasonal}_*` | ✓ |
