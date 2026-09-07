@@ -310,6 +310,27 @@ rather than plotted as a gap.
   and deliberately reverted (see Synchronization Log 2026-07-09) since Grid's
   panels are member x lead heatmaps and MMM has no member dimension of its
   own.
+- **MMM composition-change annotation** (`_annotate_mmm_steps`) — the MMM's
+  `xr.concat([...], dim="model").mean("model")` is `skipna=True` by default,
+  so as shorter-lead models (`NASA-GEOSS2S`, `NCEP-CFSv2`; see
+  `config.N_LEADS_PLOT` docstring) run out of forecast and drop to NaN, the
+  MMM silently averages over fewer models rather than raising or padding —
+  producing a step in the MMM line that can read as real forecast change
+  when it is actually a change in which models are being averaged. Rather
+  than correcting or hiding this (per the project's rule to document display
+  artifacts, not clip them), `_annotate_mmm_steps(ax, leads, mean_list, l0)`
+  computes the per-lead count of non-NaN models
+  (`xr.concat(mean_list, dim="model").notnull().sum("model")`) and, at every
+  lead index `i > l0` where that count drops (and is still > 0), draws a
+  light dotted vline (`color="0.55", ls=":"`) plus a small rotated label
+  `"MMM: N→M models"` (axes-fraction y, data-coordinate x, via
+  `ax.get_xaxis_transform()`) just inside the top of the axes. Called once
+  per figure that plots an MMM line — Compare (only for the selected-init
+  `now_list`, not the previous-init line, to avoid doubling the annotation),
+  Spread, Spread-synthetic, and Mean — immediately after that figure's MMM
+  `ax.plot()` call. `l0` (1 for seasonal, 0 for monthly) is passed through so
+  the seasonal variant's all-model NaN endpoints (see §4a) are never flagged
+  as a composition change.
 
 ### 4a. X-axis ticks and limits
 
@@ -672,8 +693,11 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
   defensively.
 - **Models with shorter lead count** (`NASA-GEOSS2S`, `NCEP-CFSv2`; see
   `config.N_LEADS_PLOT` docstring) are NaN-padded to 12 leads in the store,
-  so no special-casing is needed in the plotting code — NaNs simply stop the
-  line early.
+  so no special-casing is needed for their own per-model lines — NaNs simply
+  stop the line early. The MMM line built across models *does* need
+  special-casing, since `.mean("model")` silently shrinks the averaged set
+  rather than stopping — see the MMM composition-change annotation bullet in
+  §4 and Synchronization Log 2026-09-07.
 - **A future model with incomplete 1991-2020 hindcast coverage joining
   `avail_models`**: `_lead_error_cov` (called by both `_synthetic_plume` and
   `plot_strength_probabilities`) raises `ValueError` naming the
@@ -851,11 +875,14 @@ print("Verification passed.")
 ## Open Items
 
 - **Verification snippet's "Synthetic-plume sanity" block is broken** (pre-existing, found 2026-09-07 while re-running the full snippet after this session's `strength_probabilities` additions — not caused by this session's changes, confirmed unchanged in `git show HEAD:specs/latest_forecast.md`). It builds `avail` as *positional* indices (`np.where(...)[0]`) and passes them to `_synthetic_plume`, which does `ds[...].sel(model=avail_models)` — `.sel` expects model *names* (as `_available_models` in the actual script returns), so it raises `KeyError: "not all values found in index 'model'"`. Needs `avail_models = ds.model.isel(model=avail).values` (matching the pattern already used a few lines above in the "Summary-table rank sanity" block) before the `_synthetic_plume` calls. Not fixed this session (out of scope — unrelated to `strength_probabilities`); the rest of the snippet (through the new strength-category partition check) passes.
+- **`latest_forecast_summary.md` doesn't carry the same MMM-composition flag as the figures.** This session's `_annotate_mmm_steps` fix (see Synchronization Log 2026-09-07) is figure-only; `write_summary_tables`/`_historical_mmm` compute the same kind of shrinking-model-set MMM for the summary table's anomaly/rank rows but the table has no equivalent note when a lead's model count differs from the pool. Not addressed this session — scoped to "the latest plots" per the request that prompted the fix.
+- **Whether `GFDL-SPEAR` belongs in the MMM pool at all** — raised 2026-08-05, still open. 9 of its last 14 starts (2025-06 through 2026-06) are interior all-NaN upstream (see `config._nan_start_report`, Synchronization Log 2026-08-05), so it drops in and out of `avail`/the MMM ranking climatology inconsistently across recent inits, unlike a model that has simply reached its lead limit (which `_annotate_mmm_steps`, added this session, now flags). Needs a decision: exclude `GFDL-SPEAR` from the MMM pool until upstream is fixed, flag its intermittent absence the same way as the lead-limit case, or leave as-is pending an upstream fix. Not addressed this session.
 
 ## Synchronization Log
 
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
+| 2026-09-07 | **Flagged the MMM's model-composition step with an in-figure annotation** (new `_annotate_mmm_steps(ax, leads, mean_list, l0)`), resolving the open item raised 2026-08-05 (memory `mmm-lead9-composition-step`): the MMM's `xr.concat([...], dim='model').mean('model')` silently shrinks the averaged model set as shorter-lead models (`NASA-GEOSS2S`, `NCEP-CFSv2`) run out of forecast, producing a step in the MMM line that can read as real forecast decay. Fixed by documenting the artifact rather than correcting it (per the project's display-choices rule): the new helper computes the per-lead non-NaN model count and draws a dotted vline + `"MMM: N→M models"` label at every lead where it drops, called from `plot_compare` (selected-init line only), `plot_spread`, `plot_spread_synthetic`, and `plot_mean`, right after each figure's MMM `ax.plot()`. Confirmed live in the 2026-09 init: `NCEP-CFSv2` (the only model still running past lead 9, since `GFDL-SPEAR` and `NASA-GEOSS2S` are both currently absent from `avail` — see new Open Item on `GFDL-SPEAR`) drops at lead 10, so all 16 MMM-line figures (2 indices x 2 kinds x 4 figure types) now carry the "MMM: 5→4 models" marker at 2027-07 (monthly) / MJJ (seasonal). All 16 figures regenerated and visually checked for label placement (no collision with legends or data in either variant). No numeric/algorithm change to any plotted value — annotation only. See Algorithm §4 (new bullet) and Edge Cases. | ✓ |
 | 2026-09-07 | **Switched strength_probabilities from Monte Carlo to an analytic normal CDF**, per user question ("does this use the 100 synthetic members or a formula?") followed by a request to swap and confirm the difference is small. Extracted `_lead_error_cov(ds, avail, spec, seasonal, now_idx)` out of `_synthetic_plume` (steps 1-6 of the covariance build — historical MMM forecast error, stratified by start month, `np.cov` across leads — now shared; `_synthetic_plume` keeps only the draw/add-to-MMM steps 7-8, behavior-preserving, same seed/cov/inputs). New `_category_pct_normal(lo, hi, mean, std)` (`scipy.stats.norm.cdf`) computes each category's probability directly from `lead_mean = mmm.sel(L=valid_L)` and `lead_std = sqrt(diag(cov))` — no draws, so `N_STRENGTH_DRAWS` and the `N_SYNTHETIC_MEMBERS` save/restore dance are removed entirely. Verified the swap changes nothing that matters: compared against the prior 5000-draw Monte Carlo implementation (`scratchpad/compare_mc_vs_analytic.py`, not checked in) — max discrepancy 1.2 percentage points, mean 0.16 pp across 10 categories x 10 seasons of the 2026-09 init, against an expected 1σ Monte Carlo sampling noise of ~0.7 pp at N=5000 (worst case p=0.5) — differences are consistent with pure sampling noise. Added two Verification Snippet checks: `_category_pct_normal` sums to 100% across all categories for arbitrary mean/std (partition telescopes), and the pre-existing category-partition check still passes. New import `scipy.stats.norm`. All figures regenerated (only `strength_probabilities.png` changes visibly; the Monte Carlo plume figures using `_synthetic_plume` are numerically unaffected by the refactor). See Algorithm §4b/§4c, Constants, Verification Snippet. | ✓ |
 | 2026-09-07 | **Revised strength_probabilities to a 3-bar grouped layout and added a Super El Niño category**, per the user pointing to the actual CPC ENSO Strength Probabilities chart (the initial single-stacked-bar version misread the reference image). `_strength_categories()` restructured from one flat ascending list to `{"la_nina": [...], "neutral": (...), "el_nino": [...]}`; `plot_strength_probabilities` now plots 3 bars per season (La Niña at `x-0.27`, Neutral at `x`, El Niño at `x+0.27`, `bar_width=0.26`) instead of one 9-segment stack, with an explicit `Patch`-based legend (CPC order: El Niño strongest-first, Neutral, La Niña weakest-first) replacing the reversed-`get_legend_handles_labels()` approach. Colors re-sampled with `PIL.Image.getpixel` from a CPC chart screenshot (legend swatch fills and family edge colors) rather than eyeballed hex, per user request to match more closely. New category: Super El Niño (`index >= 3.0°C`, `#660000`), with Very Strong El Niño narrowed to `2.0°C <= index < 3.0°C` — a project-specific extension beyond the CPC chart (which stops at Very Strong `>= 2.0°C`), confirmed with the user; no mirrored Super La Niña added. New module import `matplotlib.patches`. Figure regenerated (`n34r/seasonal/strength_probabilities.png`). See Algorithm §4c, Constants, Edge Cases. | ✓ |
 | 2026-09-07 | **Added the strength_probabilities figure** (`plot_strength_probabilities`, `_strength_categories`, `_in_category`), n34r/seasonal-only: NOAA CPC ENSO Strength Probabilities chart format, reusing `_synthetic_plume` at a higher draw count (`N_STRENGTH_DRAWS=5000`, temporarily overriding the module-global `N_SYNTHETIC_MEMBERS` via save/restore, same pattern as `kalshi_roni_pricing.py`) for smoother category percentages. Title/subtitle adapted from the CPC original ("ENSO Strength Probabilities" without the "NOAA CPC" prefix; subtitle replaced with "Based on the NMME MMM and historical performance"); the CPC chart's caveat text box omitted per user request. New output `plots/latest_forecast/n34r/seasonal/strength_probabilities.png` (19th figure). Same-session, this initial design (a single 9-segment stacked bar per season) was superseded by the 3-bar grouped layout in the following log entry after the user compared it against the actual CPC chart. See Algorithm §4c, Constants, Edge Cases. | ✓ |

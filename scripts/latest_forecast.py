@@ -331,6 +331,30 @@ def _set_xaxis(fig, ax, ticks, seasonal):
     ax.set_xlim(_tight_xlim(ticks))
 
 
+def _annotate_mmm_steps(ax, leads, mean_list, l0):
+    """Mark leads where the MMM's contributing model count drops (a
+    shorter-lead model, e.g. NASA-GEOSS2S or NCEP-CFSv2, running out of
+    forecast; see config.N_LEADS_PLOT docstring), so the resulting step in
+    the MMM line isn't misread as real forecast change. `xr.concat(...).mean(
+    "model", skipna=True)` (the default) silently shrinks the averaged model
+    set rather than raising, so the step must be flagged rather than left
+    implicit — see specs/latest_forecast.md Edge Cases.
+
+    Skips indices < l0: the seasonal variant's centered rolling mean leaves
+    every model NaN at the first (and last) lead, which is a smoothing
+    artifact common to all models, not a composition change.
+    """
+    n_models = xr.concat(mean_list, dim="model").notnull().sum("model").values
+    for i in range(l0 + 1, len(n_models)):
+        if 0 < n_models[i] < n_models[i - 1]:
+            ax.axvline(leads[i], color="0.55", ls=":", lw=1, alpha=0.8, zorder=0)
+            ax.annotate(
+                f"MMM: {n_models[i - 1]}→{n_models[i]} models",
+                xy=(leads[i], 0.97), xycoords=ax.get_xaxis_transform(),
+                rotation=90, va="top", ha="right", fontsize=8, color="0.4",
+            )
+
+
 def plot_grid(ds, start, spec, now_idx, date_suffix):
     """Per-model facet grid of the latest forecast anomaly (lead x member)."""
     da = ds[spec["var"]].isel(S=now_idx)
@@ -391,6 +415,7 @@ def plot_compare(ds, start, avail, model_colors, spec, now_idx, prev_idx, date_s
     ax.plot(leads_prev[l0], mmm_prev.isel(L=l0), "o", lw=3, color=MMM_COLOR, alpha=0.9)
     ax.plot(leads_now, mmm_now, lw=4, color=MMM_COLOR, label="MMM", alpha=0.9)
     ax.plot(leads_now[l0], mmm_now.isel(L=l0), "s", lw=4, color=MMM_COLOR, alpha=0.9)
+    _annotate_mmm_steps(ax, leads_now, now_list, l0)
 
     ticks = pd.date_range(start[prev_idx], periods=13, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
@@ -432,6 +457,7 @@ def plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seas
     mmm = xr.concat(mean_list, dim="model").mean("model")
     ax.plot(leads, mmm, lw=5, color=MMM_COLOR, label="MMM", alpha=0.9)
     ax.plot(leads[l0], mmm.isel(L=l0), "s", lw=4, color=MMM_COLOR)
+    _annotate_mmm_steps(ax, leads, mean_list, l0)
 
     ticks = pd.date_range(start[now_idx], periods=12, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
@@ -478,6 +504,7 @@ def plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_su
     ax.plot(leads, hi, "--", lw=2, color=SYNTHETIC_MMM_COLOR, alpha=0.8)
     ax.plot(leads, mmm, lw=5, color=SYNTHETIC_MMM_COLOR, label="MMM", alpha=0.9)
     ax.plot(leads[l0], mmm.isel(L=l0), "s", lw=4, color=SYNTHETIC_MMM_COLOR)
+    _annotate_mmm_steps(ax, leads, mean_list, l0)
 
     ticks = pd.date_range(start[now_idx], periods=12, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
@@ -780,6 +807,7 @@ def plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, season
     mmm = xr.concat(mean_list, dim="model").mean("model")
     ax.plot(leads, mmm, lw=4, color=MMM_COLOR, label="MMM", alpha=0.9)
     ax.plot(leads[l0], mmm.isel(L=l0), "s", lw=4, color=MMM_COLOR)
+    _annotate_mmm_steps(ax, leads, mean_list, l0)
 
     ticks = pd.date_range(start[now_idx], periods=12, freq="MS")
     _set_xaxis(fig, ax, ticks, seasonal)
