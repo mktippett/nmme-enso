@@ -566,6 +566,14 @@ def _strength_categories():
     }
 
 
+def _label_text_color(hex_color):
+    """Black or white text color for best contrast against `hex_color`
+    (standard relative-luminance threshold, ITU-R BT.601 weights)."""
+    r, g, b = matplotlib.colors.to_rgb(hex_color)
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "black" if luminance > 0.6 else "white"
+
+
 def _in_category(x, lo, hi, lo_closed, hi_closed):
     left = x >= lo if lo_closed else x > lo
     right = x <= hi if hi_closed else x < hi
@@ -625,22 +633,37 @@ def plot_strength_probabilities(ds, start, avail, spec, now_idx, date_suffix):
     x = np.arange(len(leads_seasonal))
     bar_width, offset = 0.26, 0.27
 
+    # Segments below this height go unlabeled -- text wouldn't fit and would
+    # overlap neighboring segments/labels on these narrow (0.26-wide) bars.
+    label_min_pct = 6
+
     fig, ax = plt.subplots(figsize=(13, 7))
+
+    def _label_segment(xpos, pct, bottom, color):
+        if pct >= label_min_pct:
+            ax.text(xpos, bottom + pct / 2, f"{pct:.0f}%", ha="center", va="center",
+                     fontsize=8, color=_label_text_color(color))
 
     bottom = np.zeros(len(leads_seasonal))
     for label, lo, hi, lo_closed, hi_closed, color in categories["la_nina"]:
         pct = _category_pct_normal(lo, hi, lead_mean, lead_std)
         ax.bar(x - offset, pct, bottom=bottom, width=bar_width, color=color, edgecolor=STRENGTH_BLUE_EDGE, linewidth=1)
+        for xi, pcti, boti in zip(x - offset, pct, bottom):
+            _label_segment(xi, pcti, boti, color)
         bottom += pct
 
     label, lo, hi, lo_closed, hi_closed, color = categories["neutral"]
     pct = _category_pct_normal(lo, hi, lead_mean, lead_std)
     ax.bar(x, pct, width=bar_width, color=color, edgecolor=STRENGTH_NEUTRAL_EDGE, linewidth=1)
+    for xi, pcti in zip(x, pct):
+        _label_segment(xi, pcti, 0.0, color)
 
     bottom = np.zeros(len(leads_seasonal))
     for label, lo, hi, lo_closed, hi_closed, color in categories["el_nino"]:
         pct = _category_pct_normal(lo, hi, lead_mean, lead_std)
         ax.bar(x + offset, pct, bottom=bottom, width=bar_width, color=color, edgecolor=STRENGTH_RED_EDGE, linewidth=1)
+        for xi, pcti, boti in zip(x + offset, pct, bottom):
+            _label_segment(xi, pcti, boti, color)
         bottom += pct
 
     ax.set_xticks(x)
