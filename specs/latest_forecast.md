@@ -1,6 +1,6 @@
 # latest_forecast.py — Behavioral Specification
 
-> Last reviewed against code: 2026-09-07 (added the strength_probabilities figure)
+> Last reviewed against code: 2026-09-07 (added the strength_probabilities figure; switched its category probabilities to an analytic normal CDF)
 
 ## Purpose
 
@@ -360,7 +360,7 @@ limits.
   `config.load_nino34_verification()` itself is unaffected — smoothing and
   scaling are both plotting-time transforms only.
 
-### 4b. Synthetic error-covariance plume (`_synthetic_plume`)
+### 4b. Synthetic error-covariance plume (`_lead_error_cov`, `_synthetic_plume`)
 
 Implements Barnston, Tippett, van den Dool & Unger (2015, *J. Appl. Meteor.
 Climatol.*, **54**, 1579–1595, https://doi.org/10.1175/JAMC-D-14-0188.1,
@@ -370,7 +370,18 @@ forecast in combination with the historical covariance of the errors over
 the hindcast period." Computed
 fresh for each figure (index x monthly/seasonal), **in that figure's own
 final transformed/scaled space**, so the seasonal covariance is not derived
-from a shared monthly draw:
+from a shared monthly draw.
+
+Steps 1-6 (build the historical MMM forecast error and its lead-by-lead
+covariance) live in `_lead_error_cov(ds, avail, spec, seasonal, now_idx)` →
+`(valid_L, cov)`, shared by two callers: `_synthetic_plume` (steps 7-8
+below, Monte Carlo draws, used by the plume figures §4) and
+`plot_strength_probabilities` (§4c, which uses `cov`'s diagonal directly —
+no draws — since it only needs each lead's *marginal* variance, not
+lead-to-lead sample paths). Split out 2026-09-07 when `plot_strength_probabilities`
+moved from Monte Carlo to an analytic per-lead computation (see §4c); no
+change to `_synthetic_plume`'s own output (verified byte-identical to
+pre-split, same seed/cov/inputs).
 
 1. **Historical MMM forecast**, over the `avail` models used by the current
    plume, restricted to hindcast starts `year(S) in [CLIM_START_YEAR,
@@ -381,7 +392,7 @@ from a shared monthly draw:
    merely because it's the standard climatology window. `mean('model')`
    later in this step is skipna, so if a future model with a shorter
    hindcast joined `avail_models`, it would silently drop out of part of
-   the historical sample instead of raising — `_synthetic_plume` guards
+   the historical sample instead of raising — `_lead_error_cov` guards
    this explicitly: before building `fc`, it checks every `avail_models`
    member has a non-NaN zero-lead forecast at every hindcast start, and
    raises `ValueError` naming any model that doesn't. Then:
@@ -418,7 +429,8 @@ from a shared monthly draw:
    variance (≈ SEE²); off-diagonals = lead-to-lead error correlation — this
    is what gives the synthetic members realistic lead-to-lead coherence
    instead of independent per-lead noise.
-7. **Draw**: `rng = np.random.default_rng(SYNTHETIC_SEED)`, `draws =
+7. **Draw** (`_synthetic_plume`, after calling `_lead_error_cov`): `rng =
+   np.random.default_rng(SYNTHETIC_SEED)`, `draws =
    rng.multivariate_normal(np.zeros(nL), cov, size=N_SYNTHETIC_MEMBERS)` →
    `(100, nL)`. Fixed seed (`SYNTHETIC_SEED=0`) so a rerun with unchanged
    inputs reproduces byte-identical draws.
@@ -450,23 +462,44 @@ rounds of user feedback shaped the final design: an initial single
 stacked-bar-per-season version (one bar, all 9 categories stacked bottom to
 top) was replaced with the 3-bar grouped layout below after the user pointed
 to the actual CPC chart, whose bars separate El Niño/Neutral/La Niña; a Super
-El Niño category was added in the same pass.
+El Niño category was added in the same pass. A third pass (same day)
+replaced the initial Monte Carlo probability estimate with an analytic one
+(see step 2).
 
-1. **MMM and synthetic draws**: builds `mmm` (seasonal, n34r) identically to
-   Spread-synthetic's own per-model loop, then calls `_synthetic_plume(ds,
-   avail, spec, seasonal=True, now_idx, mmm)` — but first temporarily
-   overrides the module-global `N_SYNTHETIC_MEMBERS` to `N_STRENGTH_DRAWS =
-   5000` (restored in a `finally` block immediately after the draw), since a
-   9-category stacked-bar chart needs a finer empirical distribution than a
-   100-member plume — the same override pattern
-   `scripts/kalshi_roni_pricing.py` already uses for its bucket
-   probabilities.
-2. **Valid seasonal leads**: `synthetic.isel(L=slice(1, -1))` drops the two
-   NaN rolling-mean endpoint leads, same assumption `write_summary_tables`
-   and `_set_xaxis` already rely on (§4a) — 10 seasons for a 12-lead
-   forecast (one fewer than the CPC chart's 9-season window starts with,
-   since a forecast has no lead −1 data to compute the season centered on
-   the init month itself; not a bug, an inherent forecast-horizon limit).
+1. **MMM and lead error covariance**: builds `mmm` (seasonal, n34r)
+   identically to Spread-synthetic's own per-model loop, then calls
+   `_lead_error_cov(ds, avail, spec, seasonal=True, now_idx)` → `(valid_L,
+   cov)` (§4b) — the same historical-MMM-error covariance basis
+   Spread-synthetic's Monte Carlo draws use, but without drawing: `lead_mean
+   = mmm.sel(L=valid_L).values`, `lead_std = np.sqrt(np.diag(cov))`.
+2. **Per-category probability, analytic** (`_category_pct_normal(lo, hi,
+   mean, std) = 100 * (norm.cdf(hi, loc=mean, scale=std) - norm.cdf(lo,
+   loc=mean, scale=std))`, `scipy.stats.norm`): each lead's MMM forecast
+   error is Gaussian by construction (`_lead_error_cov`'s covariance comes
+   from `np.cov` over the demeaned historical error, and `_synthetic_plume`'s
+   draws are already `rng.multivariate_normal`), so each lead's *marginal*
+   distribution is exactly `Normal(lead_mean, lead_std)` — no sampling
+   needed, and (unlike the discrete `_in_category` used to define the
+   category boundaries themselves, §Constants) no sampling noise or
+   `SYNTHETIC_SEED` dependency in the plotted percentages. Boundary
+   closedness (`lo_closed`/`hi_closed`) doesn't matter here — `P(X ==
+   threshold) = 0` for a continuous distribution — so `_category_pct_normal`
+   takes plain `lo`/`hi`.
+
+   **Originally implemented as Monte Carlo** (empirical fraction of
+   `N_STRENGTH_DRAWS = 5000` draws from `_synthetic_plume`, via
+   `_in_category(valid, ...).mean("member")`), then switched to this closed
+   form the same session once compared and found to agree within expected
+   sampling noise: max discrepancy 1.2 percentage points, mean 0.16 pp
+   across all 10 categories x 10 seasons of the 2026-09 init (script:
+   `scratchpad/compare_mc_vs_analytic.py`, not checked in), against an
+   expected 1σ Monte Carlo sampling noise of ~0.7 pp at N=5000 in the
+   worst case (p=0.5) — the observed differences are consistent with pure
+   sampling noise, not a bug in either implementation. The analytic form was
+   adopted because it removes that noise entirely (and the seed dependency)
+   at no cost — closed form was always available since the distribution is
+   Gaussian, the Monte Carlo route was only used originally because it
+   reused `_synthetic_plume` outright.
 3. **Categories** (`_strength_categories()`): returns a dict `{"la_nina":
    [...], "neutral": (...), "el_nino": [...]}`, each entry `(label, lo, hi,
    lo_closed, hi_closed, facecolor)`. `la_nina`/`el_nino` lists are ascending
@@ -474,12 +507,19 @@ El Niño category was added in the same pass.
    three groups: El Niño is lower-inclusive/upper-exclusive, La Niña is
    lower-exclusive/upper-inclusive, Neutral is open both sides — so every
    threshold value (±0.5, ±1.0, ±1.5, ±2.0, 3.0) belongs to exactly one
-   category. `_in_category(x, lo, hi, lo_closed, hi_closed)` applies this
-   generically via boolean masks on the xarray `valid` draws.
-4. **Per-category probability**: for each category, `pct =
-   (_in_category(valid, ...).mean("member") * 100).values` → `(L,)` — the
-   empirical fraction of the `N_STRENGTH_DRAWS` synthetic members in that
-   bucket, per season.
+   category (the `lo_closed`/`hi_closed` flags are vestigial for this
+   figure's own analytic computation, per step 2, but still used by
+   `_in_category` in the Verification Snippet's partition-exhaustiveness
+   check, and describe the categories' true definition for documentation
+   purposes).
+4. **Valid seasonal leads**: `leads_seasonal = leads[1:-1]` drops the two
+   NaN rolling-mean endpoint leads, same assumption `write_summary_tables`
+   and `_set_xaxis` already rely on (§4a) — `valid_L`'s order matches this
+   one-to-one (`_lead_error_cov`'s own `expected_dropped=2` check). 10
+   seasons for a 12-lead forecast (one fewer than the CPC chart's 9-season
+   window starts with, since a forecast has no lead −1 data to compute the
+   season centered on the init month itself; not a bug, an inherent
+   forecast-horizon limit).
 5. **3-bar grouped layout**: `x = np.arange(n_seasons)`, `bar_width = 0.26`,
    `offset = 0.27`. La Niña bar at `x - offset` (stacked bottom-to-top
    weakest-to-strongest, `edgecolor=STRENGTH_BLUE_EDGE`), Neutral bar at `x`
@@ -581,9 +621,9 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
 | Denominator is model-dependent | `std_model(n34r)`, not `std_obs(n34-trop)` | The prior implementation's scale was a pure observational ratio (same factor applied to every model); per the first author, the factor should instead restore *each model's own* relative-index variance to the observed Niño-3.4 variance, so models with more/less variance in their `ssta_rel` get correspondingly different factors |
 | Factor stratified by `(start month, L)`, not target month | `groupby('S.month')` on the `(S, L)` grid, applied via `factor.sel(month=ds.S.dt.month)` | The prior implementation keyed the factor on *target* month (`ds.target.dt.month`); the revision keys on *start* month and lets `L` vary the factor directly, since NMME model climatology/variance structure is known to vary by both init month and lead, not just by the calendar month being verified |
 | Ensemble-member pooling | `sqrt(ssta_rel.groupby('S.month').var(['S', 'M']))` — grand-mean pooled std over the flattened start x member sample | Deliberately **not** `std('S')` of the ensemble mean (`ssta_rel.mean('M')`): the ensemble mean shrinks variance wherever skill is low, which would let predictability (a model-skill property) contaminate a factor meant to capture only variance (a model-climatology property). Switched 2026-07-07 from the equivalent-in-expectation per-member form (`sqrt(ssta_rel.groupby('S.month').var('S').mean('M'))`, the original choice) — see `scripts/rel_scaling_compare.py`, which found all three candidate denominators give the same anomaly correlation (as expected — correlation is scale-invariant); MSESS for the grand-mean-pooled denominator is *higher* than the ensemble-mean alternative (+0.067 averaged over model/month/lead, 1991-2020, a systematic effect of that estimator's skill contamination) and *slightly higher* than the per-member alternative too (-0.015 mean MSESS(per-member) − MSESS(grand-mean), i.e. grand-mean is marginally better in this sample — the residual of the two member-based estimators' finite-sample difference, small relative to the ensemble-mean gap, consistent with the two being equal in expectation). Grand-mean was adopted because it is not worse on this evidence and is the simpler estimator to describe ("pool all members together" vs. "average each member's own variance across members") |
-| `N_STRENGTH_DRAWS` | 5000 | `plot_strength_probabilities`-only override of `N_SYNTHETIC_MEMBERS` (100), applied via a save/restore of the module global around the `_synthetic_plume` call — a 9-category stacked-bar chart needs smoother empirical percentages than a 100-member plume gives; same pattern as `kalshi_roni_pricing.py`'s analogous override |
 | ENSO strength category thresholds/colors (`_strength_categories`) | Weak/Moderate/Strong/Very-Strong at ±0.5/±1.0/±1.5/±2.0°C, El Niño lower-inclusive, La Niña upper-inclusive, Neutral open both sides; fill colors `#dbeaff`/`#9fc2ff`/`#4d88ff`/`#0033cc` (La Niña, weak→very strong) and `#ffe5e5`/`#ffb3b3`/`#ff6666`/`#990000` (El Niño, weak→very strong), `#d3d3d3` (Neutral) | NOAA CPC ENSO Strength Probabilities chart convention; colors sampled with `PIL.Image.getpixel` from a CPC chart screenshot's legend swatches (both the fill and the family edge color — `STRENGTH_RED_EDGE = "#ff0000"`, `STRENGTH_BLUE_EDGE = "#0000ff"`, `STRENGTH_NEUTRAL_EDGE = "#7c7c7c"`) rather than eyeballed, per user request to "match the colors a little more closely" |
 | Super El Niño category | `index >= 3.0°C`, fill `#660000`; Very Strong El Niño narrowed to `2.0°C <= index < 3.0°C` | Project-specific extension beyond the CPC chart, which stops at Very Strong (`index >= 2.0°C`) — added at direct user request (2026-09-07), not present in the CPC source. No mirrored "Super La Niña" category was requested or added; La Niña stays 4 categories, unbounded Very Strong at `<= -2.0°C` |
+| Strength-probabilities distribution method | Analytic normal CDF (`scipy.stats.norm.cdf`) per lead, via `_category_pct_normal` | Each lead's MMM forecast error is Gaussian by construction (`_lead_error_cov`'s `np.cov`; `_synthetic_plume`'s own draws are `rng.multivariate_normal`), so the closed form gives exact category percentages — no sampling noise, no `SYNTHETIC_SEED` dependency. Switched 2026-09-07 from an initial Monte Carlo implementation (`N_STRENGTH_DRAWS=5000` empirical draws) after confirming the two agree within expected sampling noise (max 1.2 pp, mean 0.16 pp discrepancy vs. ~0.7 pp expected 1σ Monte Carlo noise at N=5000) — see Algorithm §4c |
 
 ## Edge Cases & Error Handling
 
@@ -635,7 +675,8 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
   so no special-casing is needed in the plotting code — NaNs simply stop the
   line early.
 - **A future model with incomplete 1991-2020 hindcast coverage joining
-  `avail_models`**: `_synthetic_plume` raises `ValueError` naming the
+  `avail_models`**: `_lead_error_cov` (called by both `_synthetic_plume` and
+  `plot_strength_probabilities`) raises `ValueError` naming the
   incomplete model(s) rather than silently computing the historical MMM
   error from a shrinking model set partway through the hindcast — the
   1991-2020 period was deliberately chosen because all 7 current models
@@ -759,6 +800,16 @@ for _, lo, hi, lo_closed, hi_closed, _ in all_cats:
     counts += np.asarray(_in_category(test_vals, lo, hi, lo_closed, hi_closed), dtype=int)
 assert (counts == 1).all(), "strength categories should partition the real line exactly (no gap/overlap)"
 
+# _category_pct_normal (the strength-probabilities figure's analytic
+# per-category probability, scipy.stats.norm.cdf-based) should sum to
+# exactly 100% across all 9 categories for any mean/std, since the
+# categories exhaustively partition the real line and the CDF telescopes.
+from latest_forecast import _category_pct_normal
+
+test_mean, test_std = np.array([0.0, 1.7, -2.3, 4.0]), np.array([0.4, 0.8, 1.2, 0.6])
+total_pct = sum(_category_pct_normal(lo, hi, test_mean, test_std) for _, lo, hi, *_ in all_cats)
+assert np.allclose(total_pct, 100.0), "strength-category analytic percentages should sum to 100% at every lead"
+
 # Summary-table rank sanity: the current forecast's own historical MMM value
 # must rank first among a same-value one-element pool, and the pool must
 # span ANALYSIS_START_YEAR-present.
@@ -805,6 +856,7 @@ print("Verification passed.")
 
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
+| 2026-09-07 | **Switched strength_probabilities from Monte Carlo to an analytic normal CDF**, per user question ("does this use the 100 synthetic members or a formula?") followed by a request to swap and confirm the difference is small. Extracted `_lead_error_cov(ds, avail, spec, seasonal, now_idx)` out of `_synthetic_plume` (steps 1-6 of the covariance build — historical MMM forecast error, stratified by start month, `np.cov` across leads — now shared; `_synthetic_plume` keeps only the draw/add-to-MMM steps 7-8, behavior-preserving, same seed/cov/inputs). New `_category_pct_normal(lo, hi, mean, std)` (`scipy.stats.norm.cdf`) computes each category's probability directly from `lead_mean = mmm.sel(L=valid_L)` and `lead_std = sqrt(diag(cov))` — no draws, so `N_STRENGTH_DRAWS` and the `N_SYNTHETIC_MEMBERS` save/restore dance are removed entirely. Verified the swap changes nothing that matters: compared against the prior 5000-draw Monte Carlo implementation (`scratchpad/compare_mc_vs_analytic.py`, not checked in) — max discrepancy 1.2 percentage points, mean 0.16 pp across 10 categories x 10 seasons of the 2026-09 init, against an expected 1σ Monte Carlo sampling noise of ~0.7 pp at N=5000 (worst case p=0.5) — differences are consistent with pure sampling noise. Added two Verification Snippet checks: `_category_pct_normal` sums to 100% across all categories for arbitrary mean/std (partition telescopes), and the pre-existing category-partition check still passes. New import `scipy.stats.norm`. All figures regenerated (only `strength_probabilities.png` changes visibly; the Monte Carlo plume figures using `_synthetic_plume` are numerically unaffected by the refactor). See Algorithm §4b/§4c, Constants, Verification Snippet. | ✓ |
 | 2026-09-07 | **Revised strength_probabilities to a 3-bar grouped layout and added a Super El Niño category**, per the user pointing to the actual CPC ENSO Strength Probabilities chart (the initial single-stacked-bar version misread the reference image). `_strength_categories()` restructured from one flat ascending list to `{"la_nina": [...], "neutral": (...), "el_nino": [...]}`; `plot_strength_probabilities` now plots 3 bars per season (La Niña at `x-0.27`, Neutral at `x`, El Niño at `x+0.27`, `bar_width=0.26`) instead of one 9-segment stack, with an explicit `Patch`-based legend (CPC order: El Niño strongest-first, Neutral, La Niña weakest-first) replacing the reversed-`get_legend_handles_labels()` approach. Colors re-sampled with `PIL.Image.getpixel` from a CPC chart screenshot (legend swatch fills and family edge colors) rather than eyeballed hex, per user request to match more closely. New category: Super El Niño (`index >= 3.0°C`, `#660000`), with Very Strong El Niño narrowed to `2.0°C <= index < 3.0°C` — a project-specific extension beyond the CPC chart (which stops at Very Strong `>= 2.0°C`), confirmed with the user; no mirrored Super La Niña added. New module import `matplotlib.patches`. Figure regenerated (`n34r/seasonal/strength_probabilities.png`). See Algorithm §4c, Constants, Edge Cases. | ✓ |
 | 2026-09-07 | **Added the strength_probabilities figure** (`plot_strength_probabilities`, `_strength_categories`, `_in_category`), n34r/seasonal-only: NOAA CPC ENSO Strength Probabilities chart format, reusing `_synthetic_plume` at a higher draw count (`N_STRENGTH_DRAWS=5000`, temporarily overriding the module-global `N_SYNTHETIC_MEMBERS` via save/restore, same pattern as `kalshi_roni_pricing.py`) for smoother category percentages. Title/subtitle adapted from the CPC original ("ENSO Strength Probabilities" without the "NOAA CPC" prefix; subtitle replaced with "Based on the NMME MMM and historical performance"); the CPC chart's caveat text box omitted per user request. New output `plots/latest_forecast/n34r/seasonal/strength_probabilities.png` (19th figure). Same-session, this initial design (a single 9-segment stacked bar per season) was superseded by the 3-bar grouped layout in the following log entry after the user compared it against the actual CPC chart. See Algorithm §4c, Constants, Edge Cases. | ✓ |
 | 2026-09-07 | **Reorganized figure output into `<n34\|n34r>/<monthly\|seasonal>/` subfolders with bare plot-type filenames** (e.g. `n34_seasonal_spread.png` → `n34/seasonal/spread.png`), replacing the flat 18-file `plots/latest_forecast/` directory. New `_out_path(spec, kind, name, date_suffix)` helper builds `config.PLOTS_DIR_LATEST_FORECAST / prefix / kind / f"{name}{date_suffix}.png"` and creates the subfolder; all 5 `plot_*` functions' output-path lines now call it instead of building the old `{prefix}_{kind}_{type}` filename inline. `latest_forecast_summary.md` stays at the top level (not per-index). Old flat files deleted, figures regenerated under the new layout; README figure link and Scripts-table description, and this file's Outputs table + QA output-existence check, updated to match. Purely organizational — no numeric/algorithm change. | ✓ |

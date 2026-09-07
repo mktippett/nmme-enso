@@ -30,12 +30,14 @@ Each plume figure (compare, spread, mean) is produced in two variants:
     monthly and seasonal variants (running-meaning changes the variance).
 
 A ninth figure, strength_probabilities (n34r/seasonal only, no monthly
-variant), is a stacked-bar chart of ENSO strength-category probability by
-target season, format after NOAA CPC's ENSO Strength Probabilities chart
+variant), is a grouped/stacked-bar chart of ENSO strength-category
+probability by target season, format after NOAA CPC's ENSO Strength
+Probabilities chart
 (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/strengths/).
-It reuses _synthetic_plume (the same MMM + historical-error-covariance
-draws as plot_spread_synthetic) at a higher draw count for smoother category
-percentages — see plot_strength_probabilities.
+It reuses _lead_error_cov (the same MMM + historical-error-covariance basis
+as plot_spread_synthetic's Monte Carlo draws) but computes each category's
+probability analytically via the normal CDF, since each lead's MMM error is
+Gaussian by construction — see plot_strength_probabilities.
 
 By default, plots the latest available initialization (and the one before
 it, for Compare). Pass --init-date to plot a specific past initialization
@@ -58,6 +60,7 @@ import pandas as pd
 import xarray as xr
 import matplotlib.patches
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 import config
 
@@ -71,12 +74,6 @@ N_SYNTHETIC_MEMBERS = 100
 SYNTHETIC_SEED = 0
 SYNTHETIC_MEMBER_COLOR = "#7a86c8"
 SYNTHETIC_MMM_COLOR = "#1a1a1a"
-
-# plot_strength_probabilities draws far more synthetic members than the
-# plotting default above — smooth stacked-bar category percentages need a
-# finer empirical distribution than a plume figure does (cf.
-# kalshi_roni_pricing.py's analogous override for its bucket probabilities).
-N_STRENGTH_DRAWS = 5000
 
 # Single-letter month initials, index 0 = January (the notebook's "m_str").
 SEASON_INITIALS = "JFMAMJJASOND"
@@ -148,20 +145,19 @@ def _index_transform(da, spec, seasonal, model, start_month):
     return out
 
 
-def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
-    """Draw N_SYNTHETIC_MEMBERS Gaussian scenarios from the historical MMM
-    forecast-error covariance across leads, centered on the current `mmm`.
+def _lead_error_cov(ds, avail, spec, seasonal, now_idx):
+    """Historical MMM forecast-error covariance across leads, stratified by
+    the current start month — the shared basis for both _synthetic_plume
+    (Monte Carlo draws, for the plume figures) and
+    plot_strength_probabilities (analytic per-lead normal, see its
+    docstring for why the two figure families use different methods here).
 
     Methodology (Barnston, Tippett, van den Dool & Unger 2015, JAMC, Fig. 9
     lower panels; https://doi.org/10.1175/JAMC-D-14-0188.1): the MMM
     forecast error over the 1991-2020 hindcast, stratified by the current
     start month, has a 12x12 lead-by-lead covariance. Its diagonal is the
     per-lead error variance (~SEE^2); its off-diagonals are the lead-to-lead
-    error correlation. Drawing from a multivariate normal with this
-    covariance and adding to the current MMM produces a plume whose width
-    and lead-to-lead coherence reflect actual out-of-sample skill, unlike
-    the raw ensemble-member spread (plot_spread), which mixes model-specific
-    dispersion with skill and is not calibrated.
+    error correlation.
 
     The historical MMM forecast and the error reference are built in the
     same transformed/scaled space as the plotted plume (seasonal rolling
@@ -174,15 +170,16 @@ def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
     Niño-3.4 variance), not the observed relative index (ds.obsa_rel).
 
     The error is used demeaned (np.cov subtracts the sample mean per lead):
-    any residual MMM conditional bias is intentionally not injected into
-    the synthetic members — the plume stays centered on the current MMM.
+    any residual MMM conditional bias is deliberately not folded into the
+    covariance — callers add it to the *current* MMM, not a bias-corrected
+    one.
 
     Returns
     -------
-    xarray.DataArray
-        dims (member, L), member = 0..N_SYNTHETIC_MEMBERS-1, L = mmm's full
-        lead coordinate (NaN at leads dropped for missing data, e.g. the
-        seasonal rolling mean's first/last lead).
+    tuple[xarray.DataArray, numpy.ndarray]
+        (valid_L, cov) — valid_L is the lead coordinate surviving the
+        dropna (leads with any missing hindcast sample excluded, e.g. the
+        seasonal rolling mean's NaN first/last lead); cov is (nL, nL).
     """
     avail_models = avail  # already model names (see _available_models)
     year = ds.S.dt.year
@@ -200,7 +197,7 @@ def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
     if bool(incomplete.any()):
         bad = [str(m) for m in incomplete.where(incomplete, drop=True).model.values]
         raise ValueError(
-            f"_synthetic_plume: model(s) {bad} lack complete "
+            f"_lead_error_cov: model(s) {bad} lack complete "
             f"{config.CLIM_START_YEAR}-{config.CLIM_END_YEAR} hindcast coverage; "
             "the historical MMM error assumes every avail model contributes at "
             "every hindcast start"
@@ -224,16 +221,40 @@ def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
     err_valid = err_month.dropna("L", how="any")  # drop leads with any missing sample
     valid_L = err_valid["L"]
 
-    n_dropped = mmm.sizes["L"] - valid_L.sizes["L"]
+    n_dropped = ds.sizes["L"] - valid_L.sizes["L"]
     expected_dropped = 2 if seasonal else 0
     if n_dropped != expected_dropped:
         print(
-            f"  warning: _synthetic_plume ({spec['prefix']}, "
+            f"  warning: _lead_error_cov ({spec['prefix']}, "
             f"{'seasonal' if seasonal else 'monthly'}) dropped {n_dropped} "
             f"lead(s), expected {expected_dropped}"
         )
 
     cov = np.cov(err_valid.transpose("S", "L").values, rowvar=False)  # (nL, nL)
+    return valid_L, cov
+
+
+def _synthetic_plume(ds, avail, spec, seasonal, now_idx, mmm):
+    """Draw N_SYNTHETIC_MEMBERS Gaussian scenarios from _lead_error_cov's
+    historical MMM forecast-error covariance across leads, centered on the
+    current `mmm`.
+
+    Drawing from a multivariate normal with this covariance and adding to
+    the current MMM produces a plume whose width and lead-to-lead coherence
+    reflect actual out-of-sample skill, unlike the raw ensemble-member
+    spread (plot_spread), which mixes model-specific dispersion with skill
+    and is not calibrated. See _lead_error_cov for the full covariance
+    methodology.
+
+    Returns
+    -------
+    xarray.DataArray
+        dims (member, L), member = 0..N_SYNTHETIC_MEMBERS-1, L = mmm's full
+        lead coordinate (NaN at leads dropped for missing data, e.g. the
+        seasonal rolling mean's first/last lead).
+    """
+    valid_L, cov = _lead_error_cov(ds, avail, spec, seasonal, now_idx)
+
     rng = np.random.default_rng(SYNTHETIC_SEED)
     draws = rng.multivariate_normal(np.zeros(cov.shape[0]), cov, size=N_SYNTHETIC_MEMBERS)
 
@@ -524,15 +545,34 @@ def _in_category(x, lo, hi, lo_closed, hi_closed):
     return left & right
 
 
+def _category_pct_normal(lo, hi, mean, std):
+    """Analytic P(lo <= X < hi) * 100 for X ~ Normal(mean, std) (elementwise
+    over `mean`/`std` arrays), via the normal CDF. lo/hi may be ±inf
+    (norm.cdf(±inf) = 0/1). Boundary closedness (see _strength_categories)
+    doesn't matter for a continuous distribution — P(X == threshold) = 0 —
+    so unlike _in_category this takes plain lo/hi, no closed flags."""
+    return 100 * (norm.cdf(hi, loc=mean, scale=std) - norm.cdf(lo, loc=mean, scale=std))
+
+
 def plot_strength_probabilities(ds, start, avail, spec, now_idx, date_suffix):
     """Grouped/stacked-bar ENSO strength-category probability by target
     season — n34r/seasonal only, format after NOAA CPC's ENSO Strength
     Probabilities chart (see module docstring): 3 bars per season (La Niña,
     Neutral, El Niño), the La Niña and El Niño bars internally stacked by
-    strength category. Category probabilities are the empirical fraction of
-    _synthetic_plume draws (at N_STRENGTH_DRAWS, not the plotting-default
-    N_SYNTHETIC_MEMBERS) falling in each _strength_categories bucket, per
-    season.
+    strength category.
+
+    Category probabilities are computed **analytically** (`_category_pct_normal`,
+    the normal CDF), not by drawing from _synthetic_plume: each lead's MMM
+    forecast error is itself Gaussian by construction (_lead_error_cov draws
+    its covariance from `np.cov`, and _synthetic_plume's draws are already
+    `rng.multivariate_normal`), so each lead's *marginal* distribution is
+    exactly `Normal(mmm, sqrt(cov[lead, lead]))` — no sampling needed, and no
+    sampling noise. This was originally implemented as an empirical fraction
+    over 5000 Monte Carlo draws (`N_STRENGTH_DRAWS`, temporarily overriding
+    `N_SYNTHETIC_MEMBERS`); switched to the closed form 2026-09-07 once
+    compared and confirmed to agree with the Monte Carlo version to within
+    sampling noise (see specs/latest_forecast.md Synchronization Log for the
+    comparison).
     """
     var = spec["var"]
     leads = pd.date_range(start[now_idx], periods=12, freq="MS")
@@ -544,19 +584,15 @@ def plot_strength_probabilities(ds, start, avail, spec, now_idx, date_suffix):
         mean_list.append(members.mean("M"))
     mmm = xr.concat(mean_list, dim="model").mean("model")
 
-    global N_SYNTHETIC_MEMBERS
-    orig_n = N_SYNTHETIC_MEMBERS
-    N_SYNTHETIC_MEMBERS = N_STRENGTH_DRAWS
-    try:
-        synthetic = _synthetic_plume(ds, avail, spec, True, now_idx, mmm)  # (member, L)
-    finally:
-        N_SYNTHETIC_MEMBERS = orig_n
+    valid_L, cov = _lead_error_cov(ds, avail, spec, True, now_idx)
+    lead_mean = mmm.sel(L=valid_L).values  # (nL,)
+    lead_std = np.sqrt(np.diag(cov))  # (nL,)
 
     # Seasonal rolling mean leaves the first/last lead NaN (see _set_xaxis);
-    # _synthetic_plume's expected_dropped=2 check already relies on that
-    # being exactly the first and last lead (as does write_summary_tables).
+    # _lead_error_cov's expected_dropped=2 check already relies on that
+    # being exactly the first and last lead (as does write_summary_tables),
+    # so valid_L's order matches leads[1:-1] one-to-one.
     leads_seasonal = leads[1:-1]
-    valid = synthetic.isel(L=slice(1, -1))  # (member, L=10)
 
     categories = _strength_categories()
     x = np.arange(len(leads_seasonal))
@@ -566,17 +602,17 @@ def plot_strength_probabilities(ds, start, avail, spec, now_idx, date_suffix):
 
     bottom = np.zeros(len(leads_seasonal))
     for label, lo, hi, lo_closed, hi_closed, color in categories["la_nina"]:
-        pct = (_in_category(valid, lo, hi, lo_closed, hi_closed).mean("member") * 100).values
+        pct = _category_pct_normal(lo, hi, lead_mean, lead_std)
         ax.bar(x - offset, pct, bottom=bottom, width=bar_width, color=color, edgecolor=STRENGTH_BLUE_EDGE, linewidth=1)
         bottom += pct
 
     label, lo, hi, lo_closed, hi_closed, color = categories["neutral"]
-    pct = (_in_category(valid, lo, hi, lo_closed, hi_closed).mean("member") * 100).values
+    pct = _category_pct_normal(lo, hi, lead_mean, lead_std)
     ax.bar(x, pct, width=bar_width, color=color, edgecolor=STRENGTH_NEUTRAL_EDGE, linewidth=1)
 
     bottom = np.zeros(len(leads_seasonal))
     for label, lo, hi, lo_closed, hi_closed, color in categories["el_nino"]:
-        pct = (_in_category(valid, lo, hi, lo_closed, hi_closed).mean("member") * 100).values
+        pct = _category_pct_normal(lo, hi, lead_mean, lead_std)
         ax.bar(x + offset, pct, bottom=bottom, width=bar_width, color=color, edgecolor=STRENGTH_RED_EDGE, linewidth=1)
         bottom += pct
 
