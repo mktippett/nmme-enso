@@ -29,6 +29,14 @@ Each plume figure (compare, spread, mean) is produced in two variants:
     relative index's scaling factor is also computed separately for the
     monthly and seasonal variants (running-meaning changes the variance).
 
+A ninth figure, strength_probabilities (n34r/seasonal only, no monthly
+variant), is a stacked-bar chart of ENSO strength-category probability by
+target season, format after NOAA CPC's ENSO Strength Probabilities chart
+(https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/strengths/).
+It reuses _synthetic_plume (the same MMM + historical-error-covariance
+draws as plot_spread_synthetic) at a higher draw count for smoother category
+percentages — see plot_strength_probabilities.
+
 By default, plots the latest available initialization (and the one before
 it, for Compare). Pass --init-date to plot a specific past initialization
 instead — matched by calendar month (day is ignored, since NMME inits land
@@ -48,6 +56,7 @@ matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 import xarray as xr
+import matplotlib.patches
 import matplotlib.pyplot as plt
 
 import config
@@ -62,6 +71,12 @@ N_SYNTHETIC_MEMBERS = 100
 SYNTHETIC_SEED = 0
 SYNTHETIC_MEMBER_COLOR = "#7a86c8"
 SYNTHETIC_MMM_COLOR = "#1a1a1a"
+
+# plot_strength_probabilities draws far more synthetic members than the
+# plotting default above — smooth stacked-bar category percentages need a
+# finer empirical distribution than a plume figure does (cf.
+# kalshi_roni_pricing.py's analogous override for its bucket probabilities).
+N_STRENGTH_DRAWS = 5000
 
 # Single-letter month initials, index 0 = January (the notebook's "m_str").
 SEASON_INITIALS = "JFMAMJJASOND"
@@ -463,6 +478,142 @@ def plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_su
     print(f"  wrote {out}")
 
 
+STRENGTH_RED_EDGE = "#ff0000"
+STRENGTH_BLUE_EDGE = "#0000ff"
+STRENGTH_NEUTRAL_EDGE = "#7c7c7c"
+
+
+def _strength_categories():
+    """The ENSO strength categories (NOAA CPC ENSO Strength Probabilities
+    chart convention — colors sampled from a CPC chart screenshot), split
+    into the chart's 3 bar groups. Each entry is (label, lo, hi, lo_closed,
+    hi_closed, facecolor); la_nina and el_nino lists are ascending (weakest
+    first — the bottom of each stacked bar), neutral is a single category.
+    Boundaries are exhaustive and non-overlapping across all three groups —
+    El Niño categories are lower-inclusive/upper-exclusive, La Niña
+    categories are lower-exclusive/upper-inclusive, Neutral is open on both
+    sides — so every threshold value (±0.5, ±1.0, ±1.5, ±2.0, 3.0) belongs
+    to exactly one category.
+
+    El Niño adds a Super El Niño category (index >= 3.0) above Very Strong
+    (now capped at < 3.0) — a project-specific extension beyond the CPC
+    chart, which stops at Very Strong (index >= 2.0); confirmed with the
+    user 2026-09-07.
+    """
+    return {
+        "la_nina": [
+            ("Weak La Niña\n-1.0°C < index ≤ -0.5°C", -1.0, -0.5, False, True, "#dbeaff"),
+            ("Moderate La Niña\n-1.5°C < index ≤ -1.0°C", -1.5, -1.0, False, True, "#9fc2ff"),
+            ("Strong La Niña\n-2.0°C < index ≤ -1.5°C", -2.0, -1.5, False, True, "#4d88ff"),
+            ("Very Strong La Niña\nindex ≤ -2.0°C", -np.inf, -2.0, False, True, "#0033cc"),
+        ],
+        "neutral": ("Neutral\n-0.5°C < index < 0.5°C", -0.5, 0.5, False, False, "#d3d3d3"),
+        "el_nino": [
+            ("Weak El Niño\n0.5°C ≤ index < 1.0°C", 0.5, 1.0, True, False, "#ffe5e5"),
+            ("Moderate El Niño\n1.0°C ≤ index < 1.5°C", 1.0, 1.5, True, False, "#ffb3b3"),
+            ("Strong El Niño\n1.5°C ≤ index < 2.0°C", 1.5, 2.0, True, False, "#ff6666"),
+            ("Very Strong El Niño\n2.0°C ≤ index < 3.0°C", 2.0, 3.0, True, False, "#990000"),
+            ("Super El Niño\nindex ≥ 3.0°C", 3.0, np.inf, True, False, "#660000"),
+        ],
+    }
+
+
+def _in_category(x, lo, hi, lo_closed, hi_closed):
+    left = x >= lo if lo_closed else x > lo
+    right = x <= hi if hi_closed else x < hi
+    return left & right
+
+
+def plot_strength_probabilities(ds, start, avail, spec, now_idx, date_suffix):
+    """Grouped/stacked-bar ENSO strength-category probability by target
+    season — n34r/seasonal only, format after NOAA CPC's ENSO Strength
+    Probabilities chart (see module docstring): 3 bars per season (La Niña,
+    Neutral, El Niño), the La Niña and El Niño bars internally stacked by
+    strength category. Category probabilities are the empirical fraction of
+    _synthetic_plume draws (at N_STRENGTH_DRAWS, not the plotting-default
+    N_SYNTHETIC_MEMBERS) falling in each _strength_categories bucket, per
+    season.
+    """
+    var = spec["var"]
+    leads = pd.date_range(start[now_idx], periods=12, freq="MS")
+    start_month_now = int(ds.S.isel(S=now_idx).dt.month)
+
+    mean_list = []
+    for model in avail:
+        members = _index_transform(ds[var].isel(S=now_idx).sel(model=model), spec, True, model, start_month_now)
+        mean_list.append(members.mean("M"))
+    mmm = xr.concat(mean_list, dim="model").mean("model")
+
+    global N_SYNTHETIC_MEMBERS
+    orig_n = N_SYNTHETIC_MEMBERS
+    N_SYNTHETIC_MEMBERS = N_STRENGTH_DRAWS
+    try:
+        synthetic = _synthetic_plume(ds, avail, spec, True, now_idx, mmm)  # (member, L)
+    finally:
+        N_SYNTHETIC_MEMBERS = orig_n
+
+    # Seasonal rolling mean leaves the first/last lead NaN (see _set_xaxis);
+    # _synthetic_plume's expected_dropped=2 check already relies on that
+    # being exactly the first and last lead (as does write_summary_tables).
+    leads_seasonal = leads[1:-1]
+    valid = synthetic.isel(L=slice(1, -1))  # (member, L=10)
+
+    categories = _strength_categories()
+    x = np.arange(len(leads_seasonal))
+    bar_width, offset = 0.26, 0.27
+
+    fig, ax = plt.subplots(figsize=(13, 7))
+
+    bottom = np.zeros(len(leads_seasonal))
+    for label, lo, hi, lo_closed, hi_closed, color in categories["la_nina"]:
+        pct = (_in_category(valid, lo, hi, lo_closed, hi_closed).mean("member") * 100).values
+        ax.bar(x - offset, pct, bottom=bottom, width=bar_width, color=color, edgecolor=STRENGTH_BLUE_EDGE, linewidth=1)
+        bottom += pct
+
+    label, lo, hi, lo_closed, hi_closed, color = categories["neutral"]
+    pct = (_in_category(valid, lo, hi, lo_closed, hi_closed).mean("member") * 100).values
+    ax.bar(x, pct, width=bar_width, color=color, edgecolor=STRENGTH_NEUTRAL_EDGE, linewidth=1)
+
+    bottom = np.zeros(len(leads_seasonal))
+    for label, lo, hi, lo_closed, hi_closed, color in categories["el_nino"]:
+        pct = (_in_category(valid, lo, hi, lo_closed, hi_closed).mean("member") * 100).values
+        ax.bar(x + offset, pct, bottom=bottom, width=bar_width, color=color, edgecolor=STRENGTH_RED_EDGE, linewidth=1)
+        bottom += pct
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([_season_label(d.month) for d in leads_seasonal])
+    ax.set_xlabel("Season")
+    ax.set_ylabel("Percent Chance (%)")
+    ax.set_ylim(0, 100)
+    ax.set_xlim(-0.5, len(x) - 0.5)
+    ax.grid(axis="y", visible=True, alpha=0.3)
+
+    fig.suptitle(f"ENSO Strength Probabilities (issued {start[now_idx]:%B %Y})", x=0.44, y=1.0, fontsize=18, fontweight="bold")
+    ax.set_title("Based on the NMME MMM and historical performance", fontsize=12)
+
+    # Legend order matches the CPC chart: El Niño strongest-to-weakest, then
+    # Neutral, then La Niña weakest-to-strongest — built explicitly (rather
+    # than from plotting order) since only the El Niño side needs reversing.
+    legend_entries = (
+        [(lbl, c, STRENGTH_RED_EDGE) for lbl, *_, c in reversed(categories["el_nino"])]
+        + [(categories["neutral"][0], categories["neutral"][-1], STRENGTH_NEUTRAL_EDGE)]
+        + [(lbl, c, STRENGTH_BLUE_EDGE) for lbl, *_, c in categories["la_nina"]]
+    )
+    handles = [
+        matplotlib.patches.Patch(facecolor=c, edgecolor=e, label=lbl, linewidth=1)
+        for lbl, c, e in legend_entries
+    ]
+    ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(1.02, 1.02), fontsize=8, frameon=True)
+
+    fig.set_facecolor("white")
+    plt.tight_layout()
+
+    out = _out_path(spec, "seasonal", "strength_probabilities", date_suffix)
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+
 def _historical_mmm(ds, avail, spec, seasonal):
     """Fixed-model-set MMM forecast anomaly for every start S from
     config.ANALYSIS_START_YEAR to the present.
@@ -660,6 +811,9 @@ def main():
             plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
             plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
             plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, seasonal=seasonal)
+
+        if spec["prefix"] == "n34r":
+            plot_strength_probabilities(ds, start, avail, spec, now_idx, date_suffix)
 
     write_summary_tables(ds, start, now_idx, index_specs, avail_by_prefix, date_suffix)
 

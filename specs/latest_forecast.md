@@ -1,6 +1,6 @@
 # latest_forecast.py — Behavioral Specification
 
-> Last reviewed against code: 2026-07-22 (added synthetic error-covariance spread family)
+> Last reviewed against code: 2026-09-07 (added the strength_probabilities figure)
 
 ## Purpose
 
@@ -28,6 +28,14 @@ dominated) ensemble members with a calibrated Gaussian plume drawn from the
 historical MMM forecast-error covariance across leads (Barnston, Tippett,
 van den Dool & Unger 2015, *J. Appl. Meteor. Climatol.*, **54**, 1579–1595,
 https://doi.org/10.1175/JAMC-D-14-0188.1, Fig. 9 lower panels).
+
+A 19th figure, **strength_probabilities** (§4c), is n34r/seasonal-only (no
+n34 or monthly variant): a grouped/stacked-bar chart of ENSO strength-category
+probability by target season, format after NOAA CPC's ENSO Strength
+Probabilities chart
+(https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/strengths/).
+It reuses the same synthetic-plume machinery as spread-synthetic, at a higher
+draw count for smoother category percentages.
 
 ## CLI Arguments
 
@@ -93,6 +101,7 @@ selected init's year-month, not the value typed on the command line.
 | `plots/latest_forecast/n34r/seasonal/spread.png` | Same as `n34/seasonal/spread.png`, relative index | PNG, dpi=200 |
 | `plots/latest_forecast/n34r/seasonal/spread_synthetic.png` | Same as `n34/seasonal/spread_synthetic.png`, relative index (own seasonal scaling factor, verified against `ds.obsa`) | PNG, dpi=200 |
 | `plots/latest_forecast/n34r/seasonal/mean.png` | Same as `n34/seasonal/mean.png`, relative index | PNG |
+| `plots/latest_forecast/n34r/seasonal/strength_probabilities.png` | ENSO strength-category probability by target season (n34r/seasonal only) — 3 grouped bars per season (La Niña / Neutral / El Niño), La Niña and El Niño bars internally stacked by strength category — see §4c | PNG, dpi=200 |
 | `plots/latest_forecast/latest_forecast_summary.md` | Monthly and seasonal MMM anomaly tables for both indices (n34, n34r), each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, `ANALYSIS_START_YEAR`-present — see §5 | Markdown |
 
 ## Algorithm
@@ -433,6 +442,70 @@ where inter-model separation — e.g. GEOSS2S trending to ~4.7°C vs. CanESM5 to
 typically narrower at short leads. (b) No bias correction is applied — the
 plume centers on the current (as-is) MMM, not a debiased one.
 
+### 4c. Strength probabilities (`plot_strength_probabilities`)
+
+n34r/seasonal only, called once per run (not inside the `seasonal in (False,
+True)` loop) — format after NOAA CPC's ENSO Strength Probabilities chart. Two
+rounds of user feedback shaped the final design: an initial single
+stacked-bar-per-season version (one bar, all 9 categories stacked bottom to
+top) was replaced with the 3-bar grouped layout below after the user pointed
+to the actual CPC chart, whose bars separate El Niño/Neutral/La Niña; a Super
+El Niño category was added in the same pass.
+
+1. **MMM and synthetic draws**: builds `mmm` (seasonal, n34r) identically to
+   Spread-synthetic's own per-model loop, then calls `_synthetic_plume(ds,
+   avail, spec, seasonal=True, now_idx, mmm)` — but first temporarily
+   overrides the module-global `N_SYNTHETIC_MEMBERS` to `N_STRENGTH_DRAWS =
+   5000` (restored in a `finally` block immediately after the draw), since a
+   9-category stacked-bar chart needs a finer empirical distribution than a
+   100-member plume — the same override pattern
+   `scripts/kalshi_roni_pricing.py` already uses for its bucket
+   probabilities.
+2. **Valid seasonal leads**: `synthetic.isel(L=slice(1, -1))` drops the two
+   NaN rolling-mean endpoint leads, same assumption `write_summary_tables`
+   and `_set_xaxis` already rely on (§4a) — 10 seasons for a 12-lead
+   forecast (one fewer than the CPC chart's 9-season window starts with,
+   since a forecast has no lead −1 data to compute the season centered on
+   the init month itself; not a bug, an inherent forecast-horizon limit).
+3. **Categories** (`_strength_categories()`): returns a dict `{"la_nina":
+   [...], "neutral": (...), "el_nino": [...]}`, each entry `(label, lo, hi,
+   lo_closed, hi_closed, facecolor)`. `la_nina`/`el_nino` lists are ascending
+   (weakest first). Boundaries are exhaustive and non-overlapping across all
+   three groups: El Niño is lower-inclusive/upper-exclusive, La Niña is
+   lower-exclusive/upper-inclusive, Neutral is open both sides — so every
+   threshold value (±0.5, ±1.0, ±1.5, ±2.0, 3.0) belongs to exactly one
+   category. `_in_category(x, lo, hi, lo_closed, hi_closed)` applies this
+   generically via boolean masks on the xarray `valid` draws.
+4. **Per-category probability**: for each category, `pct =
+   (_in_category(valid, ...).mean("member") * 100).values` → `(L,)` — the
+   empirical fraction of the `N_STRENGTH_DRAWS` synthetic members in that
+   bucket, per season.
+5. **3-bar grouped layout**: `x = np.arange(n_seasons)`, `bar_width = 0.26`,
+   `offset = 0.27`. La Niña bar at `x - offset` (stacked bottom-to-top
+   weakest-to-strongest, `edgecolor=STRENGTH_BLUE_EDGE`), Neutral bar at `x`
+   (single category, `edgecolor=STRENGTH_NEUTRAL_EDGE`), El Niño bar at `x +
+   offset` (stacked bottom-to-top weakest-to-strongest,
+   `edgecolor=STRENGTH_RED_EDGE`) — matching the CPC chart's left-to-right
+   La Niña/Neutral/El Niño bar order, confirmed by sampling swatch and bar
+   pixel colors from a CPC chart screenshot (see Constants).
+6. **Title/labels**: `fig.suptitle(f"ENSO Strength Probabilities (issued
+   {start[now_idx]:%B %Y})")` (bold, no "NOAA CPC" prefix — this is an
+   NMME-based figure, not a CPC product) and `ax.set_title("Based on the NMME
+   MMM and historical performance")` as the subtitle (replacing the CPC
+   chart's "based on thresholds in ERSSTv6 Relative Niño-3.4 index/RONI",
+   since this figure's basis is the forecast + error covariance, not an
+   observational threshold definition). `ax.set_xlabel("Season")`,
+   `ax.set_ylabel("Percent Chance (%)")`, `ylim=(0, 100)`. The CPC chart's
+   "Stronger events do not always mean bigger weather and climate impacts"
+   caveat text box is deliberately omitted (out of scope for this
+   NMME-focused figure; user request).
+7. **Legend**: built explicitly from `matplotlib.patches.Patch` objects
+   (not `ax.get_legend_handles_labels()`, since the desired order can't be
+   produced by reversing the plotting-order list alone) in CPC order: El
+   Niño strongest-to-weakest (`reversed(categories["el_nino"])`), then
+   Neutral, then La Niña weakest-to-strongest (`categories["la_nina"]`,
+   already ascending).
+
 ### 5. Summary tables (`write_summary_tables`)
 
 After the grid/compare/spread/mean figures are written for both index specs,
@@ -508,6 +581,9 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
 | Denominator is model-dependent | `std_model(n34r)`, not `std_obs(n34-trop)` | The prior implementation's scale was a pure observational ratio (same factor applied to every model); per the first author, the factor should instead restore *each model's own* relative-index variance to the observed Niño-3.4 variance, so models with more/less variance in their `ssta_rel` get correspondingly different factors |
 | Factor stratified by `(start month, L)`, not target month | `groupby('S.month')` on the `(S, L)` grid, applied via `factor.sel(month=ds.S.dt.month)` | The prior implementation keyed the factor on *target* month (`ds.target.dt.month`); the revision keys on *start* month and lets `L` vary the factor directly, since NMME model climatology/variance structure is known to vary by both init month and lead, not just by the calendar month being verified |
 | Ensemble-member pooling | `sqrt(ssta_rel.groupby('S.month').var(['S', 'M']))` — grand-mean pooled std over the flattened start x member sample | Deliberately **not** `std('S')` of the ensemble mean (`ssta_rel.mean('M')`): the ensemble mean shrinks variance wherever skill is low, which would let predictability (a model-skill property) contaminate a factor meant to capture only variance (a model-climatology property). Switched 2026-07-07 from the equivalent-in-expectation per-member form (`sqrt(ssta_rel.groupby('S.month').var('S').mean('M'))`, the original choice) — see `scripts/rel_scaling_compare.py`, which found all three candidate denominators give the same anomaly correlation (as expected — correlation is scale-invariant); MSESS for the grand-mean-pooled denominator is *higher* than the ensemble-mean alternative (+0.067 averaged over model/month/lead, 1991-2020, a systematic effect of that estimator's skill contamination) and *slightly higher* than the per-member alternative too (-0.015 mean MSESS(per-member) − MSESS(grand-mean), i.e. grand-mean is marginally better in this sample — the residual of the two member-based estimators' finite-sample difference, small relative to the ensemble-mean gap, consistent with the two being equal in expectation). Grand-mean was adopted because it is not worse on this evidence and is the simpler estimator to describe ("pool all members together" vs. "average each member's own variance across members") |
+| `N_STRENGTH_DRAWS` | 5000 | `plot_strength_probabilities`-only override of `N_SYNTHETIC_MEMBERS` (100), applied via a save/restore of the module global around the `_synthetic_plume` call — a 9-category stacked-bar chart needs smoother empirical percentages than a 100-member plume gives; same pattern as `kalshi_roni_pricing.py`'s analogous override |
+| ENSO strength category thresholds/colors (`_strength_categories`) | Weak/Moderate/Strong/Very-Strong at ±0.5/±1.0/±1.5/±2.0°C, El Niño lower-inclusive, La Niña upper-inclusive, Neutral open both sides; fill colors `#dbeaff`/`#9fc2ff`/`#4d88ff`/`#0033cc` (La Niña, weak→very strong) and `#ffe5e5`/`#ffb3b3`/`#ff6666`/`#990000` (El Niño, weak→very strong), `#d3d3d3` (Neutral) | NOAA CPC ENSO Strength Probabilities chart convention; colors sampled with `PIL.Image.getpixel` from a CPC chart screenshot's legend swatches (both the fill and the family edge color — `STRENGTH_RED_EDGE = "#ff0000"`, `STRENGTH_BLUE_EDGE = "#0000ff"`, `STRENGTH_NEUTRAL_EDGE = "#7c7c7c"`) rather than eyeballed, per user request to "match the colors a little more closely" |
+| Super El Niño category | `index >= 3.0°C`, fill `#660000`; Very Strong El Niño narrowed to `2.0°C <= index < 3.0°C` | Project-specific extension beyond the CPC chart, which stops at Very Strong (`index >= 2.0°C`) — added at direct user request (2026-09-07), not present in the CPC source. No mirrored "Super La Niña" category was requested or added; La Niña stays 4 categories, unbounded Very Strong at `<= -2.0°C` |
 
 ## Edge Cases & Error Handling
 
@@ -574,6 +650,18 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
   `RuntimeWarning` counts before/after this feature (25 baseline vs. 27
   with Spread-synthetic added, for 2 seasonal figures x 1 warning each; no
   *new* degrees-of-freedom warnings from the covariance step itself).
+- **Strength-probabilities season count vs. the CPC chart**: a Sep-init
+  forecast's centered seasonal rolling mean has no lead −1 data, so the
+  earliest valid season is one step later than the CPC chart's own leading
+  season (e.g. `SON` here vs. `JAS` there for the same init month) — 10
+  seasons plotted per run instead of CPC's 9. Inherent to the forecast
+  horizon, not a bug; not otherwise special-cased.
+- **Strength category boundary values** (exactly ±0.5, ±1.0, ±1.5, ±2.0,
+  3.0°C): resolved to exactly one category by construction
+  (`_in_category`'s `lo_closed`/`hi_closed` flags) — never double-counted or
+  dropped. Draws essentially never land on these thresholds exactly (a
+  synthetic Gaussian draw has probability 0 of an exact match), so this
+  matters only for documentation/reproducibility, not observed output.
 - **Attrs leaking into the grid colorbar label**: `ds.ssta`/`ds.ssta_rel`
   inherit a stale `standard_name`/`units` from the raw store field (copied
   wholesale by `_n34_average`/`_tropics_average`), and multiplying by the
@@ -652,9 +740,24 @@ for f in [
     "n34r/seasonal/spread.png",
     "n34r/seasonal/spread_synthetic.png",
     "n34r/seasonal/mean.png",
+    "n34r/seasonal/strength_probabilities.png",
     "latest_forecast_summary.md",
 ]:
     assert (config.PLOTS_DIR_LATEST_FORECAST / f).exists(), f"missing output {f}"
+
+# Strength-category boundaries must be exhaustive and non-overlapping: a
+# fine grid of test values across the full plausible range should each land
+# in exactly one category, and every category should collectively cover the
+# real line.
+from latest_forecast import _strength_categories, _in_category
+
+cats = _strength_categories()
+all_cats = cats["la_nina"] + [cats["neutral"]] + cats["el_nino"]
+test_vals = np.linspace(-4, 4, 4001)
+counts = np.zeros(len(test_vals), dtype=int)
+for _, lo, hi, lo_closed, hi_closed, _ in all_cats:
+    counts += np.asarray(_in_category(test_vals, lo, hi, lo_closed, hi_closed), dtype=int)
+assert (counts == 1).all(), "strength categories should partition the real line exactly (no gap/overlap)"
 
 # Summary-table rank sanity: the current forecast's own historical MMM value
 # must rank first among a same-value one-element pool, and the pool must
@@ -694,10 +797,16 @@ xr.testing.assert_identical(synth1, synth2)  # fixed seed -> identical draws
 print("Verification passed.")
 ```
 
+## Open Items
+
+- **Verification snippet's "Synthetic-plume sanity" block is broken** (pre-existing, found 2026-09-07 while re-running the full snippet after this session's `strength_probabilities` additions — not caused by this session's changes, confirmed unchanged in `git show HEAD:specs/latest_forecast.md`). It builds `avail` as *positional* indices (`np.where(...)[0]`) and passes them to `_synthetic_plume`, which does `ds[...].sel(model=avail_models)` — `.sel` expects model *names* (as `_available_models` in the actual script returns), so it raises `KeyError: "not all values found in index 'model'"`. Needs `avail_models = ds.model.isel(model=avail).values` (matching the pattern already used a few lines above in the "Summary-table rank sanity" block) before the `_synthetic_plume` calls. Not fixed this session (out of scope — unrelated to `strength_probabilities`); the rest of the snippet (through the new strength-category partition check) passes.
+
 ## Synchronization Log
 
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
+| 2026-09-07 | **Revised strength_probabilities to a 3-bar grouped layout and added a Super El Niño category**, per the user pointing to the actual CPC ENSO Strength Probabilities chart (the initial single-stacked-bar version misread the reference image). `_strength_categories()` restructured from one flat ascending list to `{"la_nina": [...], "neutral": (...), "el_nino": [...]}`; `plot_strength_probabilities` now plots 3 bars per season (La Niña at `x-0.27`, Neutral at `x`, El Niño at `x+0.27`, `bar_width=0.26`) instead of one 9-segment stack, with an explicit `Patch`-based legend (CPC order: El Niño strongest-first, Neutral, La Niña weakest-first) replacing the reversed-`get_legend_handles_labels()` approach. Colors re-sampled with `PIL.Image.getpixel` from a CPC chart screenshot (legend swatch fills and family edge colors) rather than eyeballed hex, per user request to match more closely. New category: Super El Niño (`index >= 3.0°C`, `#660000`), with Very Strong El Niño narrowed to `2.0°C <= index < 3.0°C` — a project-specific extension beyond the CPC chart (which stops at Very Strong `>= 2.0°C`), confirmed with the user; no mirrored Super La Niña added. New module import `matplotlib.patches`. Figure regenerated (`n34r/seasonal/strength_probabilities.png`). See Algorithm §4c, Constants, Edge Cases. | ✓ |
+| 2026-09-07 | **Added the strength_probabilities figure** (`plot_strength_probabilities`, `_strength_categories`, `_in_category`), n34r/seasonal-only: NOAA CPC ENSO Strength Probabilities chart format, reusing `_synthetic_plume` at a higher draw count (`N_STRENGTH_DRAWS=5000`, temporarily overriding the module-global `N_SYNTHETIC_MEMBERS` via save/restore, same pattern as `kalshi_roni_pricing.py`) for smoother category percentages. Title/subtitle adapted from the CPC original ("ENSO Strength Probabilities" without the "NOAA CPC" prefix; subtitle replaced with "Based on the NMME MMM and historical performance"); the CPC chart's caveat text box omitted per user request. New output `plots/latest_forecast/n34r/seasonal/strength_probabilities.png` (19th figure). Same-session, this initial design (a single 9-segment stacked bar per season) was superseded by the 3-bar grouped layout in the following log entry after the user compared it against the actual CPC chart. See Algorithm §4c, Constants, Edge Cases. | ✓ |
 | 2026-09-07 | **Reorganized figure output into `<n34\|n34r>/<monthly\|seasonal>/` subfolders with bare plot-type filenames** (e.g. `n34_seasonal_spread.png` → `n34/seasonal/spread.png`), replacing the flat 18-file `plots/latest_forecast/` directory. New `_out_path(spec, kind, name, date_suffix)` helper builds `config.PLOTS_DIR_LATEST_FORECAST / prefix / kind / f"{name}{date_suffix}.png"` and creates the subfolder; all 5 `plot_*` functions' output-path lines now call it instead of building the old `{prefix}_{kind}_{type}` filename inline. `latest_forecast_summary.md` stays at the top level (not per-index). Old flat files deleted, figures regenerated under the new layout; README figure link and Scripts-table description, and this file's Outputs table + QA output-existence check, updated to match. Purely organizational — no numeric/algorithm change. | ✓ |
 | 2026-08-06 | Added the nominal-init-date annotation (`_fmt_init`, `_init_textbox`, `_place_grid_init`) to all Grid/Compare/Spread/Spread-synthetic/Mean figures. First pass appended a second title line to each `ax.set_title()`/`fig.suptitle()`; per feedback the date moved out of the title into a boxed annotation (upper-left in axes-fraction coordinates for the line plots, the Grid figure's empty `col_wrap` facet slot for Grid) so titles stay one line. `plot_grid`'s signature gained a `start` parameter. Also corrected the README's known-data-issue callout (stale reference to a specific past plume screenshot) — no code change. | ✓ |
 | 2026-07-06 | Initial script + `config.load_nino34_ssta()` written | ✓ |

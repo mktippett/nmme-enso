@@ -79,3 +79,7 @@ cache/
 *.swp
 *.swo
 *~
+
+# Standalone one-off scripts (not part of the analysis pipeline; e.g.
+# market-pricing tools that reference third-party contract terms)
+scripts/kalshi_roni_pricing.py
