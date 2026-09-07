@@ -43,7 +43,7 @@ Latest-forecast plume of the scaled relative Niño-3.4 index — members thin,
 ensemble mean thick (`scripts/latest_forecast.py`; regenerated as new
 initializations arrive):
 
-![Relative Niño-3.4 seasonal forecast plume](plots/latest_forecast/n34r_seasonal_spread.png)
+![Relative Niño-3.4 seasonal forecast plume](plots/latest_forecast/n34r/seasonal/spread.png)
 
 > **Known data issue:** IRI served two corrupt COLA-RSMAS-CESM1 ensemble
 > members (2026-03 start, member 5; 2026-07 start, member 1) — flat or
@@ -79,7 +79,7 @@ mamba run -n pangeo-local python scripts/skill.py
 
 | Script | Description | Notable args |
 |--------|-------------|--------------|
-| `latest_forecast.py` | Niño-3.4 (`n34_*`) and relative Niño-3.4 (`n34r_*`) plume figures (grid, compare, spread, spread-synthetic, mean; monthly + seasonal variants) from the local NMME zarr store, written to `plots/latest_forecast/`. Spread-synthetic draws 100 Gaussian scenarios from the historical MMM forecast-error covariance across leads (Barnston et al. 2015, *JAMC*, Fig. 9 — see Citation), a calibrated alternative to the raw (model-bias-dominated) ensemble-member spread. Also writes `latest_forecast_summary.md`: monthly/seasonal MMM anomaly tables for both indices, with each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, 1991-present. | `--init-date YYYY-MM[-DD]` — plot a specific past initialization (matched by calendar month) instead of the latest; output filenames get a `_<YYYY-MM>` suffix. See `specs/latest_forecast.md`. |
+| `latest_forecast.py` | Niño-3.4 (`n34/`) and relative Niño-3.4 (`n34r/`) plume figures (grid, compare, spread, spread-synthetic, mean; monthly/ + seasonal/ subfolders) from the local NMME zarr store, written to `plots/latest_forecast/<n34\|n34r>/<monthly\|seasonal>/`. Spread-synthetic draws 100 Gaussian scenarios from the historical MMM forecast-error covariance across leads (Barnston et al. 2015, *JAMC*, Fig. 9 — see Citation), a calibrated alternative to the raw (model-bias-dominated) ensemble-member spread. Also writes `latest_forecast_summary.md`: monthly/seasonal MMM anomaly tables for both indices, with each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, 1991-present. | `--init-date YYYY-MM[-DD]` — plot a specific past initialization (matched by calendar month) instead of the latest; output filenames get a `_<YYYY-MM>` suffix. See `specs/latest_forecast.md`. |
 | `skill.py` | Niño-3.4 forecast-skill heatmaps (anomaly correlation, MSESS) vs. ERSSTv5, by model + multi-model mean, start-month and target-month framings, 1991-2020, written to `plots/skill/` | none. See `specs/skill.md`. |
 | `rel_scaling_compare.py` | Exploratory/diagnostic (no production figures): evidence for the relative Niño-3.4 scaling factor's member-pooling choice — all 3 pairwise comparisons among per-member, ensemble-mean (flawed), and grand-mean (chosen since 2026-07-07) variance — via MSESS/AC, 1991-2020, written to `plots/rel_scaling_compare/` | none. See `specs/rel_scaling_compare.md`. |
 

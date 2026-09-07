@@ -8,7 +8,7 @@ monitoring figures. These are exploratory/monitoring figures, not
 manuscript figures: they carry the climatology note in the title rather
 than travelling with a separate caption.
 
-Two indices are plotted, each as its own figure set (n34_* / n34r_*):
+Two indices are plotted, each into its own subfolder (plots/latest_forecast/n34/, n34r/):
   - Niño-3.4 (ds.ssta): the standard box anomaly.
   - relative Niño-3.4 (ds.ssta_rel, scaled): Niño-3.4 anomaly minus the
     tropical-mean anomaly, rescaled by a (model, start-month, lead)-
@@ -262,6 +262,13 @@ def _place_grid_init(fg, text):
     ax.text(0.5, 0.5, text, transform=ax.transAxes, ha="center", va="center", fontsize=13, fontweight="bold", bbox=_INIT_BBOX)
 
 
+def _out_path(spec, kind, name, date_suffix, ext="png"):
+    """Figure/table path: plots/latest_forecast/<prefix>/<kind>/<name><suffix>.<ext>."""
+    d = config.PLOTS_DIR_LATEST_FORECAST / spec["prefix"] / kind
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{name}{date_suffix}.{ext}"
+
+
 def _tight_xlim(ticks):
     """xlim spanning exactly the tick range, padded by half a time step on each side."""
     half_step = (ticks[1] - ticks[0]) / 2
@@ -310,7 +317,7 @@ def plot_grid(ds, start, spec, now_idx, date_suffix):
     fig.set_facecolor("white")
     _place_grid_init(fg, f"Init:\n{_fmt_init(start[now_idx])}")
 
-    out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_monthly_grid{date_suffix}.png"
+    out = _out_path(spec, "monthly", "grid", date_suffix)
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out}")
@@ -360,7 +367,7 @@ def plot_compare(ds, start, avail, model_colors, spec, now_idx, prev_idx, date_s
     plt.tight_layout()
 
     kind = "seasonal" if seasonal else "monthly"
-    out_png = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_{kind}_compare{date_suffix}.png"
+    out_png = _out_path(spec, kind, "compare", date_suffix)
     fig.savefig(out_png, dpi=200, format="png")
     plt.close(fig)
     print(f"  wrote {out_png}")
@@ -401,7 +408,7 @@ def plot_spread(ds, start, avail, model_colors, spec, now_idx, date_suffix, seas
     plt.tight_layout()
 
     kind = "seasonal" if seasonal else "monthly"
-    out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_{kind}_spread{date_suffix}.png"
+    out = _out_path(spec, kind, "spread", date_suffix)
     fig.savefig(out, dpi=200, format="png")
     plt.close(fig)
     print(f"  wrote {out}")
@@ -450,7 +457,7 @@ def plot_spread_synthetic(ds, start, avail, model_colors, spec, now_idx, date_su
     plt.tight_layout()
 
     kind = "seasonal" if seasonal else "monthly"
-    out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_{kind}_spread_synthetic{date_suffix}.png"
+    out = _out_path(spec, kind, "spread_synthetic", date_suffix)
     fig.savefig(out, dpi=200, format="png")
     plt.close(fig)
     print(f"  wrote {out}")
@@ -598,7 +605,7 @@ def plot_mean(ds, start, avail, model_colors, spec, now_idx, date_suffix, season
     plt.tight_layout()
 
     kind = "seasonal" if seasonal else "monthly"
-    out = config.PLOTS_DIR_LATEST_FORECAST / f"{spec['prefix']}_{kind}_mean{date_suffix}.png"
+    out = _out_path(spec, kind, "mean", date_suffix)
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out}")

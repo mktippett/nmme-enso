@@ -65,31 +65,34 @@ trailing `RECHECK_TAIL=2` starts.
 
 ## Outputs
 
-Filenames below are for the default (no `--init-date`) run. When
-`--init-date` is passed, every filename gets a `_<YYYY-MM>` suffix before
-`.png` (e.g. `n34_monthly_grid_2026-06.png`) — the selected init's
-year-month, not the value typed on the command line.
+Figures are organized `plots/latest_forecast/<n34|n34r>/<monthly|seasonal>/`
+— index (standard vs. relative Niño-3.4) then cadence — with a bare plot-type
+filename inside each subfolder (folder path already encodes index + cadence;
+`grid.png` has no seasonal variant). Filenames below are for the default (no
+`--init-date`) run. When `--init-date` is passed, every filename gets a
+`_<YYYY-MM>` suffix before `.png` (e.g. `n34/monthly/grid_2026-06.png`) — the
+selected init's year-month, not the value typed on the command line.
 
 | File | Contents | Format |
 |------|----------|--------|
-| `plots/latest_forecast/n34_monthly_grid.png` | Facet grid (one panel per model) of the selected-init Niño-3.4 anomaly, lead x member | PNG, dpi=150 |
-| `plots/latest_forecast/n34_monthly_compare.png` | Ensemble-mean plume: selected init (solid) vs. previous init (dashed), monthly | PNG, dpi=200 |
-| `plots/latest_forecast/n34_monthly_spread.png` | All members (thin) + ensemble mean (thick), selected init only, monthly | PNG, dpi=200 |
-| `plots/latest_forecast/n34_monthly_spread_synthetic.png` | 100 synthetic members + MMM + 10th/90th percentile, drawn from the historical MMM error covariance across leads (see §4b), selected init only, monthly | PNG, dpi=200 |
-| `plots/latest_forecast/n34_monthly_mean.png` | Ensemble-mean-only plume, selected init only, monthly | PNG |
-| `plots/latest_forecast/n34_seasonal_compare.png` | Same as `n34_monthly_compare.png`, but each series is a centered 3-month running mean over lead, x-axis labeled by target season | PNG, dpi=200 |
-| `plots/latest_forecast/n34_seasonal_spread.png` | Same as `n34_monthly_spread.png`, seasonal (members and ensemble mean both smoothed) | PNG, dpi=200 |
-| `plots/latest_forecast/n34_seasonal_spread_synthetic.png` | Same as `n34_monthly_spread_synthetic.png`, seasonal (error covariance computed in the smoothed space, see §4b) | PNG, dpi=200 |
-| `plots/latest_forecast/n34_seasonal_mean.png` | Same as `n34_monthly_mean.png`, seasonal | PNG |
-| `plots/latest_forecast/n34r_monthly_grid.png` | Same as `n34_monthly_grid.png`, for the scaled relative Niño-3.4 anomaly | PNG, dpi=150 |
-| `plots/latest_forecast/n34r_monthly_compare.png` | Same as `n34_monthly_compare.png`, relative index | PNG, dpi=200 |
-| `plots/latest_forecast/n34r_monthly_spread.png` | Same as `n34_monthly_spread.png`, relative index | PNG, dpi=200 |
-| `plots/latest_forecast/n34r_monthly_spread_synthetic.png` | Same as `n34_monthly_spread_synthetic.png`, relative index — error covariance computed in the scaled `ssta_rel` space and verified against **observed absolute** Niño-3.4 (`ds.obsa`), not `ds.obsa_rel` (see §4b) | PNG, dpi=200 |
-| `plots/latest_forecast/n34r_monthly_mean.png` | Same as `n34_monthly_mean.png`, relative index | PNG |
-| `plots/latest_forecast/n34r_seasonal_compare.png` | Same as `n34_seasonal_compare.png`, relative index (own seasonal scaling factor) | PNG, dpi=200 |
-| `plots/latest_forecast/n34r_seasonal_spread.png` | Same as `n34_seasonal_spread.png`, relative index | PNG, dpi=200 |
-| `plots/latest_forecast/n34r_seasonal_spread_synthetic.png` | Same as `n34_seasonal_spread_synthetic.png`, relative index (own seasonal scaling factor, verified against `ds.obsa`) | PNG, dpi=200 |
-| `plots/latest_forecast/n34r_seasonal_mean.png` | Same as `n34_seasonal_mean.png`, relative index | PNG |
+| `plots/latest_forecast/n34/monthly/grid.png` | Facet grid (one panel per model) of the selected-init Niño-3.4 anomaly, lead x member | PNG, dpi=150 |
+| `plots/latest_forecast/n34/monthly/compare.png` | Ensemble-mean plume: selected init (solid) vs. previous init (dashed), monthly | PNG, dpi=200 |
+| `plots/latest_forecast/n34/monthly/spread.png` | All members (thin) + ensemble mean (thick), selected init only, monthly | PNG, dpi=200 |
+| `plots/latest_forecast/n34/monthly/spread_synthetic.png` | 100 synthetic members + MMM + 10th/90th percentile, drawn from the historical MMM error covariance across leads (see §4b), selected init only, monthly | PNG, dpi=200 |
+| `plots/latest_forecast/n34/monthly/mean.png` | Ensemble-mean-only plume, selected init only, monthly | PNG |
+| `plots/latest_forecast/n34/seasonal/compare.png` | Same as `n34/monthly/compare.png`, but each series is a centered 3-month running mean over lead, x-axis labeled by target season | PNG, dpi=200 |
+| `plots/latest_forecast/n34/seasonal/spread.png` | Same as `n34/monthly/spread.png`, seasonal (members and ensemble mean both smoothed) | PNG, dpi=200 |
+| `plots/latest_forecast/n34/seasonal/spread_synthetic.png` | Same as `n34/monthly/spread_synthetic.png`, seasonal (error covariance computed in the smoothed space, see §4b) | PNG, dpi=200 |
+| `plots/latest_forecast/n34/seasonal/mean.png` | Same as `n34/monthly/mean.png`, seasonal | PNG |
+| `plots/latest_forecast/n34r/monthly/grid.png` | Same as `n34/monthly/grid.png`, for the scaled relative Niño-3.4 anomaly | PNG, dpi=150 |
+| `plots/latest_forecast/n34r/monthly/compare.png` | Same as `n34/monthly/compare.png`, relative index | PNG, dpi=200 |
+| `plots/latest_forecast/n34r/monthly/spread.png` | Same as `n34/monthly/spread.png`, relative index | PNG, dpi=200 |
+| `plots/latest_forecast/n34r/monthly/spread_synthetic.png` | Same as `n34/monthly/spread_synthetic.png`, relative index — error covariance computed in the scaled `ssta_rel` space and verified against **observed absolute** Niño-3.4 (`ds.obsa`), not `ds.obsa_rel` (see §4b) | PNG, dpi=200 |
+| `plots/latest_forecast/n34r/monthly/mean.png` | Same as `n34/monthly/mean.png`, relative index | PNG |
+| `plots/latest_forecast/n34r/seasonal/compare.png` | Same as `n34/seasonal/compare.png`, relative index (own seasonal scaling factor) | PNG, dpi=200 |
+| `plots/latest_forecast/n34r/seasonal/spread.png` | Same as `n34/seasonal/spread.png`, relative index | PNG, dpi=200 |
+| `plots/latest_forecast/n34r/seasonal/spread_synthetic.png` | Same as `n34/seasonal/spread_synthetic.png`, relative index (own seasonal scaling factor, verified against `ds.obsa`) | PNG, dpi=200 |
+| `plots/latest_forecast/n34r/seasonal/mean.png` | Same as `n34/seasonal/mean.png`, relative index | PNG |
 | `plots/latest_forecast/latest_forecast_summary.md` | Monthly and seasonal MMM anomaly tables for both indices (n34, n34r), each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, `ANALYSIS_START_YEAR`-present — see §5 | Markdown |
 
 ## Algorithm
@@ -423,7 +426,7 @@ encountered` and correctly returns NaN (see Edge Cases).
 
 **Deliberate deviations from raw Spread**: (a) the plume is *not* meant to
 reproduce the total multi-model spread, which mixes model-specific climate
-drift/bias with genuine forecast uncertainty (compare `n34_monthly_spread.png`,
+drift/bias with genuine forecast uncertainty (compare `n34/monthly/spread.png`,
 where inter-model separation — e.g. GEOSS2S trending to ~4.7°C vs. CanESM5 to
 ~1°C by Feb — dwarfs any single model's own member spread); it reproduces the
 *MMM's own* out-of-sample verification uncertainty instead, which is
@@ -631,24 +634,24 @@ except ValueError:
     pass
 
 for f in [
-    "n34_monthly_grid.png",
-    "n34_monthly_compare.png",
-    "n34_monthly_spread.png",
-    "n34_monthly_spread_synthetic.png",
-    "n34_monthly_mean.png",
-    "n34_seasonal_compare.png",
-    "n34_seasonal_spread.png",
-    "n34_seasonal_spread_synthetic.png",
-    "n34_seasonal_mean.png",
-    "n34r_monthly_grid.png",
-    "n34r_monthly_compare.png",
-    "n34r_monthly_spread.png",
-    "n34r_monthly_spread_synthetic.png",
-    "n34r_monthly_mean.png",
-    "n34r_seasonal_compare.png",
-    "n34r_seasonal_spread.png",
-    "n34r_seasonal_spread_synthetic.png",
-    "n34r_seasonal_mean.png",
+    "n34/monthly/grid.png",
+    "n34/monthly/compare.png",
+    "n34/monthly/spread.png",
+    "n34/monthly/spread_synthetic.png",
+    "n34/monthly/mean.png",
+    "n34/seasonal/compare.png",
+    "n34/seasonal/spread.png",
+    "n34/seasonal/spread_synthetic.png",
+    "n34/seasonal/mean.png",
+    "n34r/monthly/grid.png",
+    "n34r/monthly/compare.png",
+    "n34r/monthly/spread.png",
+    "n34r/monthly/spread_synthetic.png",
+    "n34r/monthly/mean.png",
+    "n34r/seasonal/compare.png",
+    "n34r/seasonal/spread.png",
+    "n34r/seasonal/spread_synthetic.png",
+    "n34r/seasonal/mean.png",
     "latest_forecast_summary.md",
 ]:
     assert (config.PLOTS_DIR_LATEST_FORECAST / f).exists(), f"missing output {f}"
@@ -695,6 +698,7 @@ print("Verification passed.")
 
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
+| 2026-09-07 | **Reorganized figure output into `<n34\|n34r>/<monthly\|seasonal>/` subfolders with bare plot-type filenames** (e.g. `n34_seasonal_spread.png` → `n34/seasonal/spread.png`), replacing the flat 18-file `plots/latest_forecast/` directory. New `_out_path(spec, kind, name, date_suffix)` helper builds `config.PLOTS_DIR_LATEST_FORECAST / prefix / kind / f"{name}{date_suffix}.png"` and creates the subfolder; all 5 `plot_*` functions' output-path lines now call it instead of building the old `{prefix}_{kind}_{type}` filename inline. `latest_forecast_summary.md` stays at the top level (not per-index). Old flat files deleted, figures regenerated under the new layout; README figure link and Scripts-table description, and this file's Outputs table + QA output-existence check, updated to match. Purely organizational — no numeric/algorithm change. | ✓ |
 | 2026-08-06 | Added the nominal-init-date annotation (`_fmt_init`, `_init_textbox`, `_place_grid_init`) to all Grid/Compare/Spread/Spread-synthetic/Mean figures. First pass appended a second title line to each `ax.set_title()`/`fig.suptitle()`; per feedback the date moved out of the title into a boxed annotation (upper-left in axes-fraction coordinates for the line plots, the Grid figure's empty `col_wrap` facet slot for Grid) so titles stay one line. `plot_grid`'s signature gained a `start` parameter. Also corrected the README's known-data-issue callout (stale reference to a specific past plume screenshot) — no code change. | ✓ |
 | 2026-07-06 | Initial script + `config.load_nino34_ssta()` written | ✓ |
 | 2026-07-06 | Dropped duplicate `.pdf` output for the compare figure (PNG only) | ✓ |
