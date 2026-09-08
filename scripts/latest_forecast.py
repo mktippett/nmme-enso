@@ -14,7 +14,7 @@ Two indices are plotted, each into its own subfolder (plots/latest_forecast/n34/
     tropical-mean anomaly, rescaled by a (model, start-month, lead)-
     dependent factor (config.rel_scaling_factor) so the model's own
     relative-index variance matches the observed (ERSSTv5) Niño-3.4
-    variance over 1991-2020 — see L'Heureux, Tippett et al. (2024,
+    variance over 1991-2020 — see L'Heureux et al. (2024,
     J. Climate, papers/) for the index's origin; the specific
     model-relative, (month, lead)-stratified factor here is an extension
     beyond the paper's obs-only ratio (see specs/latest_forecast.md).

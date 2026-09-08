@@ -15,7 +15,7 @@ trend, and event classification drifts as the climatology period is updated.
 
 [Van Oldenborgh et al. (2021)](https://doi.org/10.1029/2021GL095041) proposed
 subtracting the tropical-mean SST anomaly, and
-[L'Heureux, Tippett, et al. (2024)](https://doi.org/10.1175/JCLI-D-23-0406.1)
+[L'Heureux et al. (2024)](https://doi.org/10.1175/JCLI-D-23-0406.1)
 developed the operational form used by NOAA CPC, the **relative Niño-3.4
 index** (also called RONI):
 

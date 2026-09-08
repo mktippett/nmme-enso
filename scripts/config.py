@@ -67,7 +67,7 @@ N34_LAT = slice(-5, 5)
 N34_LON = slice(190, 240)
 
 # ---------------------------------------------------------------------------
-# Tropical mean region — for the relative Niño-3.4 index (L'Heureux, Tippett
+# Tropical mean region — for the relative Niño-3.4 index (L'Heureux
 # et al. 2024, J. Climate). Entire tropics, all longitudes.
 # ---------------------------------------------------------------------------
 TROPICS_LAT = slice(-20, 20)
@@ -322,7 +322,7 @@ def load_nino34_ssta(store=None, use_cache=True):
     average (20S-20N, all lon), computes cftime target (valid) time, and
     removes a per-model, per-init-month ensemble-mean climatology from each
     to form ssta and ssta_trop. ssta_rel = ssta - ssta_trop is the unscaled
-    relative Niño-3.4 index (L'Heureux, Tippett et al. 2024, J. Climate) —
+    relative Niño-3.4 index (L'Heureux et al. 2024, J. Climate) —
     scaling to match the variance of ssta (against the model's own
     relative-index variance) is applied by the caller (see
     rel_scaling_factor), not computed here.
@@ -509,7 +509,7 @@ def rel_scaling_factor(ds, period=(CLIM_START_YEAR, CLIM_END_YEAR)):
     """(model, month, L) factor scaling the *model* relative Niño-3.4 index
     variance to match the *observed* Niño-3.4 variance.
 
-    Per the first author of L'Heureux, Tippett et al. (2024, J. Climate):
+    Per the first author of L'Heureux et al. (2024, J. Climate):
     "scale the model relative Niño-3.4 variance to match the observed
     1991-2020 Niño-3.4 variance." This differs from the paper's own
     obs-only ratio (std_obs(n34)/std_obs(n34-trop), a single per-calendar-
