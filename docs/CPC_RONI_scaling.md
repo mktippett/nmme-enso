@@ -1,6 +1,6 @@
 # Reproducing NOAA CPC's Relative ONI (RONI) from ERSSTv6
 
-This note documents how to reproduce NOAA CPC's operational **Relative
+This note investigates how to reproduce NOAA CPC's operational **Relative
 Oceanic Niño Index (RONI)** — both its monthly and seasonal published
 series — from the published ERSSTv6 SST dataset. CPC's RONI is a distinct
 product from the relative Niño-3.4 index this project computes for NMME
@@ -35,6 +35,21 @@ climatology. Cosine-latitude weighting versus a plain grid-cell mean makes
 a negligible difference to the results below (under 0.0001 in every fitted
 factor), so the choice between them is not otherwise a source of
 uncertainty here.
+
+CPC's description amounts to the following formula, at monthly resolution:
+
+$$
+\text{RONI}(\text{month}) \;=\; f(\text{month}) \times \Big(\underbrace{\text{N34}_{\text{anom}}}_{\text{known}} \;-\; \underbrace{\text{Trop}_{\text{anom}}}_{\text{known}}\Big)
+$$
+
+$\text{N34}_{\text{anom}}$ and $\text{Trop}_{\text{anom}}$ — the two box
+anomalies above — are both computable directly from ERSSTv6. The
+per-calendar-month factor $f(\text{month})$ is the one unknown quantity:
+CPC states only that it is chosen so that "the variance equals the
+original Niño 3.4 index," not its numeric value, the period over which
+that variance is computed, or whether the underlying series is
+detrended first. Backing out $f(\text{month})$ from the known left- and
+right-hand sides is the task of Sections 3–4.
 
 ## 2. The published monthly and seasonal series are mutually consistent
 
