@@ -59,6 +59,7 @@ CACHE_DIR = ANALYSIS_DIR / "cache"
 PLOTS_DIR_LATEST_FORECAST    = PLOTS_DIR / "latest_forecast"
 PLOTS_DIR_SKILL              = PLOTS_DIR / "skill"
 PLOTS_DIR_REL_SCALING_COMPARE = PLOTS_DIR / "rel_scaling_compare"
+PLOTS_DIR_RONI_FACTOR_BACKOUT = PLOTS_DIR / "roni_factor_backout"
 
 # ---------------------------------------------------------------------------
 # Niño-3.4 region
@@ -99,6 +100,19 @@ ERSSTV5_NC = Path(os.environ.get(
     "ERSSTV5_NC",
     str(OBS_DIR / "ERSSTv5.sst.mnmean.nc"),
 ))
+
+# ERSSTv6 local file (override with ERSSTV6_NC env var) — used by
+# roni_factor_backout.py to reproduce CPC's Relative ONI (RONI), which is
+# explicitly defined on ERSSTv6 (not v5). Not otherwise used in this
+# project's forecast-verification pipeline, which stays on ERSSTv5.
+ERSSTV6_NC = Path(os.environ.get(
+    "ERSSTV6_NC",
+    str(OBS_DIR / "ERSSTv6.sst.mnmean.nc"),
+))
+
+# CPC Relative ONI ascii table (https://www.cpc.ncep.noaa.gov/data/indices/
+# RONI.ascii.txt) — used by roni_factor_backout.py.
+RONI_TXT = OBS_DIR / "RONI.ascii.txt"
 
 # ---------------------------------------------------------------------------
 # Short display names — used in figure titles and legends
