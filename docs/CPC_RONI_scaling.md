@@ -49,8 +49,8 @@ $$
 \text{RONI}(\text{month}) = f(\text{month}) \times \Big(\underbrace{\text{N34}_{\text{anom}}}_{\text{known}} - \underbrace{\text{Trop}_{\text{anom}}}_{\text{known}}\Big)
 $$
 
-The two box anomalies above, $\text{N34}_{\text{anom}}$ and
-$\text{Trop}_{\text{anom}}$, are both computable directly from ERSSTv6. The
+The two box anomalies above, `N34_anom` and `Trop_anom`, are both
+computable directly from ERSSTv6. The
 per-calendar-month factor $f(\text{month})$ is the one unknown quantity:
 CPC states only that it is chosen so that "the variance equals the
 original Niño 3.4 index," not its numeric value, the period over which
