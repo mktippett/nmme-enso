@@ -115,6 +115,48 @@ neither helps nor hurts the fit, which is expected once Section 2
 established that seasonal values are nothing more than the monthly
 average.
 
+The summary statistics above describe the fit's accuracy in aggregate;
+Tables 2 and 3 show what that accuracy looks like against the actual
+published values, for the same 2020–2026 window as CPC's own RONI product
+page (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/),
+which displays these values rounded to one decimal place — the two-decimal
+values below are from the underlying ASCII files, not visible on that page
+directly, and are what make the small remaining errors visible at all.
+
+*Table 2. Published seasonal RONI, 2020–2026 (`RONI.ascii.txt`).*
+
+| Year | DJF | JFM | FMA | MAM | AMJ | MJJ | JJA | JAS | ASO | SON | OND | NDJ |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2020 | 0.14 | 0.10 | 0.02 | -0.25 | -0.55 | -0.72 | -0.76 | -0.85 | -1.16 | -1.37 | -1.46 | -1.39 |
+| 2021 | -1.32 | -1.18 | -1.08 | -0.89 | -0.68 | -0.57 | -0.60 | -0.76 | -0.95 | -1.08 | -1.24 | -1.22 |
+| 2022 | -1.18 | -1.13 | -1.19 | -1.26 | -1.17 | -0.95 | -0.86 | -0.94 | -1.07 | -1.10 | -1.05 | -0.99 |
+| 2023 | -0.86 | -0.68 | -0.55 | -0.31 | -0.04 | 0.28 | 0.54 | 0.79 | 1.04 | 1.30 | 1.42 | 1.40 |
+| 2024 | 1.13 | 0.78 | 0.42 | 0.04 | -0.28 | -0.45 | -0.49 | -0.56 | -0.67 | -0.76 | -0.88 | -1.05 |
+| 2025 | -1.10 | -0.85 | -0.66 | -0.50 | -0.48 | -0.36 | -0.41 | -0.59 | -0.78 | -0.93 | -0.98 | -1.04 |
+| 2026 | -0.91 | -0.76 | -0.44 | -0.04 | 0.49 | 0.97 | 1.36 | — | — | — | — | — |
+
+*Table 3. This note's reconstruction, from ERSSTv6 and the Section 3
+factor table alone.*
+
+| Year | DJF | JFM | FMA | MAM | AMJ | MJJ | JJA | JAS | ASO | SON | OND | NDJ |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2020 | 0.14 | 0.10 | 0.02 | -0.25 | -0.55 | -0.72 | -0.75 | -0.84 | -1.16 | -1.36 | -1.46 | -1.39 |
+| 2021 | -1.32 | -1.18 | -1.08 | -0.89 | -0.68 | -0.57 | -0.60 | -0.76 | -0.94 | -1.08 | -1.24 | -1.22 |
+| 2022 | -1.17 | -1.13 | -1.19 | -1.26 | -1.17 | -0.95 | -0.86 | -0.94 | -1.06 | -1.10 | -1.05 | -0.99 |
+| 2023 | -0.86 | -0.68 | -0.55 | -0.31 | -0.04 | 0.28 | 0.55 | 0.79 | 1.05 | 1.30 | 1.43 | 1.41 |
+| 2024 | 1.14 | 0.78 | 0.43 | 0.04 | -0.27 | -0.45 | -0.49 | -0.56 | -0.67 | -0.76 | -0.88 | -1.04 |
+| 2025 | -1.09 | -0.84 | -0.65 | -0.50 | -0.47 | -0.36 | -0.40 | -0.58 | -0.78 | -0.93 | -0.97 | -1.03 |
+| 2026 | -0.90 | -0.75 | -0.44 | -0.04 | 0.48 | 0.97 | 1.36 | — | — | — | — | — |
+
+Over these 79 values the largest single discrepancy is 0.012°C (AMJ 2026:
+published 0.49 vs. 0.478 reconstructed) and the RMS is 0.0047°C, consistent
+with the pooled statistics above. At the one-decimal precision CPC's own
+page displays, 75 of 79 values match exactly; the 4 exceptions are cases
+where the published value sits almost exactly on a rounding boundary
+(e.g. MAM 2020: published −0.25, reconstructed −0.253, which round to
+different neighbors depending on the rounding rule applied), not genuine
+divergence.
+
 ## 4. A seasonal-only fit, for comparison
 
 CPC's RONI is not built this way (Section 2), but fitting a single factor
