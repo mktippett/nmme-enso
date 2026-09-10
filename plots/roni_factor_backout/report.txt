@@ -1,4 +1,7 @@
 
+-- Step 1: published seasonal RONI vs. 3-month avg of published monthly RONI --
+n=919, max|diff|=0.0067, rms=0.0032, mean=0.000069
+
 -- single-row backout, validated against all other years --
 SEAS  n  ref_year  factor_single_row  factor_mean_all_years  factor_std_all_years  max_abs_err_other_years  rms_err_other_years
  DJF 77      1983             1.2474                 1.3109                0.5992                   0.0135               0.0060
@@ -59,6 +62,37 @@ SEAS  rms_seasonal_fit  rms_monthly_fit
  SON            0.0041           0.0043
  OND            0.0045           0.0047
  NDJ            0.0053           0.0046
+
+-- monthly factor fit DIRECT against Rnino34.ascii.txt, 20 most recent years --
+month  n     years   factor       se  ci95_lo  ci95_hi  rms_resid
+  Jan 20 2007-2026   1.2476   0.0013   1.2451   1.2501     0.0051
+  Feb 20 2007-2026   1.2737   0.0016   1.2706   1.2767     0.0051
+  Mar 20 2007-2026   1.3391   0.0025   1.3341   1.3441     0.0061
+  Apr 20 2007-2026   1.3900   0.0027   1.3846   1.3953     0.0054
+  May 20 2007-2026   1.3563   0.0026   1.3513   1.3613     0.0047
+  Jun 20 2007-2026   1.2479   0.0034   1.2412   1.2546     0.0067
+  Jul 20 2007-2026   1.1870   0.0025   1.1821   1.1919     0.0059
+  Aug 20 2007-2026   1.1671   0.0017   1.1638   1.1705     0.0052
+  Sep 20 2006-2025   1.2022   0.0017   1.1989   1.2056     0.0054
+  Oct 20 2006-2025   1.2149   0.0013   1.2123   1.2175     0.0049
+  Nov 20 2006-2025   1.2205   0.0012   1.2181   1.2230     0.0052
+  Dec 20 2006-2025   1.2322   0.0013   1.2297   1.2347     0.0054
+
+-- round-trip check: direct monthly factors, 3-month averaged, vs. published seasonal RONI --
+SEAS  n  rms_resid
+ DJF 20     0.0046
+ JFM 20     0.0047
+ FMA 20     0.0054
+ MAM 20     0.0047
+ AMJ 20     0.0057
+ MJJ 20     0.0046
+ JJA 20     0.0053
+ JAS 19     0.0049
+ ASO 19     0.0047
+ SON 19     0.0044
+ OND 19     0.0047
+ NDJ 19     0.0047
+overall RMS: 0.0049  (cf. 0.0048 for the joint-fit-from-seasonal-only approach)
 
 -- per-(year, season) backed-out factor (RONI / ERSSTv6 diff_3mo) --
 SEAS    DJF    JFM    FMA    MAM    AMJ    MJJ    JJA    JAS    ASO    SON    OND    NDJ

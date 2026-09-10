@@ -114,6 +114,12 @@ ERSSTV6_NC = Path(os.environ.get(
 # RONI.ascii.txt) — used by roni_factor_backout.py.
 RONI_TXT = OBS_DIR / "RONI.ascii.txt"
 
+# CPC monthly (not 3-month-running-mean) relative Nino-3.4 ascii table
+# (https://www.cpc.ncep.noaa.gov/data/indices/Rnino34.ascii.txt) — used by
+# roni_factor_backout.py to fit each calendar month's factor directly,
+# rather than only indirectly via the seasonal (RONI_TXT) aggregates.
+RNINO34_TXT = OBS_DIR / "Rnino34.ascii.txt"
+
 # ---------------------------------------------------------------------------
 # Short display names — used in figure titles and legends
 # ---------------------------------------------------------------------------

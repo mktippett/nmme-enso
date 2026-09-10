@@ -156,6 +156,65 @@ def load_roni_table(path=None):
     return df
 
 
+def load_rnino34_table(path=None):
+    """CPC's published *monthly* (not 3-month-running-mean) relative
+    Nino-3.4 series — Rnino34.ascii.txt, a different CPC product from the
+    seasonal RONI.ascii.txt (config.RONI_TXT). Lets each calendar month's
+    factor be fit directly against its own monthly target, rather than only
+    indirectly through the seasonal aggregates (see
+    backout_monthly_factors_direct()).
+    """
+    path = config.RNINO34_TXT if path is None else path
+    df = pd.read_csv(path, sep=r"\s+")
+    df = df.rename(columns={"MTH": "month", "YR": "year"})
+    print(f"load_rnino34_table: {path}, {len(df)} rows, "
+          f"{df.year.iloc[0]}-{df.month.iloc[0]:02d} .. {df.year.iloc[-1]}-{df.month.iloc[-1]:02d}")
+    return df
+
+
+def check_monthly_seasonal_consistency():
+    """Self-consistency check between CPC's two published products, with no
+    involvement of ERSSTv6 or any fitted factor: does a 3-month centered
+    running mean of the published *monthly* series (Rnino34.ascii.txt)
+    reproduce the published *seasonal* series (RONI.ascii.txt)?
+
+    This is the first and most basic check, logically prior to any factor
+    fitting: it establishes that CPC's scaling factor is applied at the
+    monthly level (with the seasonal series nothing more than a 3-month
+    average of already-scaled monthly values), which is the premise the
+    rest of this module's monthly-factor fitting relies on. See
+    docs/CPC_RONI_scaling.md Section 2.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Matched rows: SEAS, YR, ANOM_seas (published seasonal), 3mo_avg
+        (rolling mean of published monthly), diff.
+    """
+    rnino34 = load_rnino34_table().sort_values(["year", "month"]).reset_index(drop=True)
+    rnino34["t"] = pd.to_datetime(dict(year=rnino34.year, month=rnino34.month, day=1))
+    rnino34 = rnino34.set_index("t")
+    n_gaps = len(pd.date_range(rnino34.index.min(), rnino34.index.max(), freq="MS")) - len(rnino34)
+    assert n_gaps == 0, f"Rnino34.ascii.txt has {n_gaps} gap(s) in monthly coverage"
+
+    rnino34["3mo_avg"] = rnino34.ANOM.rolling(3, center=True).mean()
+    rnino34 = rnino34.dropna(subset=["3mo_avg"])
+    rnino34["SEAS"] = rnino34.month.map(_season_label)
+    rnino34["YR"] = rnino34.year
+
+    roni = load_roni_table()
+    merged = rnino34.reset_index().merge(
+        roni, on=["SEAS", "YR"], how="inner", suffixes=("_mo", "_seas"))
+    merged = merged.rename(columns={"ANOM_seas": "ANOM_seas", "ANOM_mo": "ANOM_monthly"})
+    merged["diff"] = merged.ANOM_seas - merged["3mo_avg"]
+
+    print(f"check_monthly_seasonal_consistency: matched {len(merged)}/{len(roni)}, "
+          f"max|diff|={merged['diff'].abs().max():.4f}, "
+          f"rms={np.sqrt((merged['diff']**2).mean()):.4f}, "
+          f"mean={merged['diff'].mean():.6f}")
+    return merged[["SEAS", "YR", "ANOM_seas", "3mo_avg", "diff"]]
+
+
 def load_merged(weighted=True):
     """ERSSTv6-derived diff_3mo joined to published RONI, on (SEAS, YR)."""
     ersst = load_ersstv6_3mo_anomalies(weighted=weighted)
@@ -323,6 +382,87 @@ def backout_monthly_factors(n_recent=20, merged=None, weighted=True):
     return out, rms_resid, n_obs
 
 
+def backout_monthly_factors_direct(n_recent=20, weighted=True):
+    """Fit each calendar month's factor directly against CPC's published
+    *monthly* relative Nino-3.4 series (Rnino34.ascii.txt), rather than only
+    indirectly through the seasonal RONI aggregates (backout_monthly_
+    factors()). Each calendar month's factor is now an independent
+    OLS-through-origin fit — no shared design matrix needed, since every
+    observation maps to exactly one column (no season-driven 3-month
+    coupling) — over the n_recent most recent years of that calendar month.
+
+    Returns
+    -------
+    (pandas.DataFrame, pandas.DataFrame)
+        Per-month factor table (month, factor, se, ci95_lo, ci95_hi,
+        rms_resid, n), and the merged (year, month, diff, ANOM) table used
+        to fit it.
+    """
+    diffs = monthly_diff_lookup(weighted=weighted)
+    rnino34 = load_rnino34_table()
+    rnino34 = rnino34.copy()
+    rnino34["diff"] = [diffs.get((int(y), int(m))) for y, m in
+                        zip(rnino34.year, rnino34.month)]
+    rnino34 = rnino34.dropna(subset=["diff"])
+
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    rows = []
+    for m in range(1, 13):
+        g = rnino34[rnino34.month == m].sort_values("year").tail(n_recent)
+        x, y = g["diff"].values, g.ANOM.values
+        n = len(x)
+
+        factor = np.sum(x * y) / np.sum(x * x)
+        resid = y - factor * x
+        sigma2 = np.sum(resid ** 2) / (n - 1)
+        se = np.sqrt(sigma2 / np.sum(x * x))
+
+        rows.append(dict(
+            month=month_names[m - 1], n=n,
+            years=f"{int(g.year.min())}-{int(g.year.max())}",
+            factor=factor, se=se,
+            ci95_lo=factor - 1.96 * se, ci95_hi=factor + 1.96 * se,
+            rms_resid=np.sqrt(np.mean(resid ** 2)),
+        ))
+
+    return pd.DataFrame(rows), rnino34
+
+
+def validate_direct_monthly_against_seasonal(monthly_direct, merged, n_recent=20):
+    """Apply the directly-fit monthly factors (backout_monthly_factors_
+    direct()) to monthly diff, 3-month-average the *scaled* values, and
+    compare against the published seasonal RONI (merged.ANOM) — the full
+    round-trip check of "fixed monthly factors applied to monthly data,
+    then 3-month averaged" against an independent CPC product.
+    """
+    beta = dict(zip(range(1, 13), monthly_direct.factor.values))
+    diffs = monthly_diff_lookup()
+
+    cutoff_year = merged.YR.max() - n_recent + 1
+    recent = merged[merged.YR >= cutoff_year].sort_values(["SEAS", "YR"]).reset_index(drop=True)
+
+    pred = []
+    for row in recent.itertuples():
+        p = sum(beta[_neighbor_month(row.year, row.month, off)[1]]
+                * diffs[_neighbor_month(row.year, row.month, off)] / 3.0
+                for off in (-1, 0, 1))
+        pred.append(p)
+    resid = recent.ANOM.values - np.array(pred)
+
+    rows = []
+    season_order = [_season_label(m) for m in range(1, 13)]
+    for seas in season_order:
+        mask = recent.SEAS.values == seas
+        rows.append(dict(
+            SEAS=seas, n=int(mask.sum()),
+            rms_resid=np.sqrt(np.mean(resid[mask] ** 2)),
+        ))
+    out = pd.DataFrame(rows)
+    overall_rms = np.sqrt(np.mean(resid ** 2))
+    return out, overall_rms
+
+
 def factor_table_by_year(merged=None):
     """Per-(year, season) backed-out factor = published RONI / ERSSTv6
     diff_3mo, pivoted into the same year x season layout as CPC's own
@@ -353,6 +493,17 @@ if __name__ == "__main__":
     out_dir = config.PLOTS_DIR_RONI_FACTOR_BACKOUT
     out_dir.mkdir(parents=True, exist_ok=True)
     log = []
+
+    # Step 1 (docs/CPC_RONI_scaling.md Section 2): do CPC's own published
+    # monthly and seasonal series agree with each other, with no ERSSTv6
+    # involved at all? Establishes that the scaling factor is applied
+    # monthly, before any temporal averaging.
+    consistency = check_monthly_seasonal_consistency()
+    _emit("\n-- Step 1: published seasonal RONI vs. 3-month avg of published monthly RONI --", log)
+    _emit(f"n={len(consistency)}, max|diff|={consistency['diff'].abs().max():.4f}, "
+          f"rms={np.sqrt((consistency['diff']**2).mean()):.4f}, "
+          f"mean={consistency['diff'].mean():.6f}", log)
+    consistency.to_csv(out_dir / "monthly_seasonal_consistency.csv", index=False)
 
     merged = load_merged()  # weighted=True (cos-lat area weighting) — the
     # unweighted variant tested 2026-09-10 gave no improvement (RMS 0.00488
@@ -401,6 +552,26 @@ if __name__ == "__main__":
     _emit("\n-- per-season RMS: seasonal-block fit vs. joint monthly fit --", log)
     _emit(compare.to_string(index=False), log)
     compare.to_csv(out_dir / "seasonal_vs_monthly_rms.csv", index=False)
+
+    # Third check (2026-09-10): CPC also publishes the *monthly* relative
+    # Nino-3.4 series directly (Rnino34.ascii.txt) — fit each month's factor
+    # against that directly (no seasonal-aggregate coupling needed), then
+    # verify the full round trip: scale monthly, 3-month-average, compare
+    # to the independently-published seasonal RONI.
+    monthly_direct, rnino34_matched = backout_monthly_factors_direct(n_recent=20)
+    _emit(f"\n-- monthly factor fit DIRECT against Rnino34.ascii.txt, "
+          f"20 most recent years --", log)
+    _emit(monthly_direct.to_string(index=False), log)
+    monthly_direct.to_csv(out_dir / "monthly_factors_direct.csv", index=False)
+
+    seasonal_check, seasonal_check_rms = validate_direct_monthly_against_seasonal(
+        monthly_direct, merged, n_recent=20)
+    _emit(f"\n-- round-trip check: direct monthly factors, 3-month averaged, "
+          f"vs. published seasonal RONI --", log)
+    _emit(seasonal_check.to_string(index=False), log)
+    _emit(f"overall RMS: {seasonal_check_rms:.4f}  "
+          f"(cf. {monthly_rms:.4f} for the joint-fit-from-seasonal-only approach)", log)
+    seasonal_check.to_csv(out_dir / "direct_monthly_vs_seasonal_rms.csv", index=False)
 
     by_year = factor_table_by_year(merged=merged)
     by_year.to_csv(out_dir / "factor_by_year.csv")
