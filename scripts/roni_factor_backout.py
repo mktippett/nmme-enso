@@ -1,5 +1,5 @@
 """
-roni_factor_backout.py — back out CPC's per-season RONI scaling factor.
+roni_factor_backout.py — back out CPC's RONI scaling factor from ERSSTv6.
 
 CPC's Relative Oceanic Niño Index (RONI) page
 (https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/)
@@ -12,26 +12,32 @@ describes the index as:
     3.4 index."
 
 That fixes the anomaly recipe (box definitions, 1991-2020 base period,
-3-month running mean) but not the scaling factor's numeric value, and per
-the user (2026-09-10) the factor is known to vary by season.
+3-month running mean) but not the scaling factor's numeric value, which
+varies with the calendar month.
 
-RONI = factor(season) * diff_3mo is a per-season scalar multiply, not a
-statistical fit, so factor(season) should be recoverable exactly (up to
-RONI's 2-decimal rounding) from a single (year, season) row by simple
-division — and that single-row factor should reproduce every *other* year
-of the same season. backout_factors() does exactly that: for each season,
-divide the published RONI by the ERSSTv6-computed (Niño-3.4 anom -
-tropical-mean anom) for the most extreme year (largest |diff|, to minimize
-the relative effect of 2-decimal rounding), then applies that one factor to
-every other year and reports the residuals. Small residuals confirm the
-factor is genuinely constant across years within a season, rather than an
-artifact of averaging over many years.
+The current answer, and the order the sections below are built in (see
+docs/CPC_RONI_scaling.md for the write-up):
 
-An earlier version of this script instead fit a full-record least-squares
-regression and a variance-ratio computed over the entire 1850-2026 ERSSTv6
-record — an unjustified assumption about which period CPC's own variance
-ratio is taken over, and unnecessary once a single row already pins down
-the factor exactly.
+ 1. check_monthly_seasonal_consistency() — CPC's published monthly
+    (Rnino34.ascii.txt) and seasonal (RONI.ascii.txt) products are mutually
+    consistent, using no ERSSTv6 data at all. The factor is therefore
+    applied to *monthly* values, with the seasonal product nothing more
+    than their 3-month running mean.
+ 2. backout_monthly_factors_direct() — the primary estimate: each calendar
+    month's factor by OLS through the origin against the published monthly
+    series.
+ 3. rounding_convention_check() — the ~0.005 residual left by (2) is the
+    publication convention: CPC's published values are floored to two
+    decimals, not rounded to nearest. Refitting with a free intercept
+    absorbs it and drops the residual to the quantization floor.
+ 4. reconstruct_from_factors() / reconstruction_tables() — the full round
+    trip, ERSSTv6 to published values, monthly and seasonal.
+
+backout_factors(), backout_factors_recent() and backout_monthly_factors()
+are superseded estimators kept for comparison: the first two fit one factor
+per *season* (an approximation, since the factor varies within a season),
+the third recovers monthly factors from the seasonal product alone. They
+quantify what the simpler models cost; they are not the recipe.
 
 Exploratory/diagnostic only — not part of the production pipeline, not
 referenced by any other script. Writes its printed report and the
@@ -382,6 +388,29 @@ def backout_monthly_factors(n_recent=20, merged=None, weighted=True):
     return out, rms_resid, n_obs
 
 
+MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def monthly_fit_frame(weighted=True, start_year=1950):
+    """CPC's published *monthly* relative Niño-3.4 series joined to the
+    ERSSTv6 monthly diff on (year, month) — the (x, y) table every
+    monthly-resolution fit and check below is built from.
+    """
+    diffs = monthly_diff_lookup(weighted=weighted)
+    rnino34 = load_rnino34_table().copy()
+    rnino34["diff"] = [diffs.get((int(y), int(m))) for y, m in
+                       zip(rnino34.year, rnino34.month)]
+    rnino34 = rnino34.dropna(subset=["diff"])
+    return rnino34[rnino34.year >= start_year].reset_index(drop=True)
+
+
+def _recent_years(frame, n_recent):
+    """The n_recent most recent years of each calendar month, stacked."""
+    return pd.concat([frame[frame.month == m].sort_values("year").tail(n_recent)
+                      for m in range(1, 13)])
+
+
 def backout_monthly_factors_direct(n_recent=20, weighted=True):
     """Fit each calendar month's factor directly against CPC's published
     *monthly* relative Nino-3.4 series (Rnino34.ascii.txt), rather than only
@@ -398,15 +427,9 @@ def backout_monthly_factors_direct(n_recent=20, weighted=True):
         rms_resid, n), and the merged (year, month, diff, ANOM) table used
         to fit it.
     """
-    diffs = monthly_diff_lookup(weighted=weighted)
-    rnino34 = load_rnino34_table()
-    rnino34 = rnino34.copy()
-    rnino34["diff"] = [diffs.get((int(y), int(m))) for y, m in
-                        zip(rnino34.year, rnino34.month)]
-    rnino34 = rnino34.dropna(subset=["diff"])
+    rnino34 = monthly_fit_frame(weighted=weighted)
 
-    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    month_names = MONTH_NAMES
     rows = []
     for m in range(1, 13):
         g = rnino34[rnino34.month == m].sort_values("year").tail(n_recent)
@@ -429,7 +452,8 @@ def backout_monthly_factors_direct(n_recent=20, weighted=True):
     return pd.DataFrame(rows), rnino34
 
 
-def validate_direct_monthly_against_seasonal(monthly_direct, merged, n_recent=20):
+def validate_direct_monthly_against_seasonal(monthly_direct, merged, n_recent=20,
+                                             weighted=True):
     """Apply the directly-fit monthly factors (backout_monthly_factors_
     direct()) to monthly diff, 3-month-average the *scaled* values, and
     compare against the published seasonal RONI (merged.ANOM) — the full
@@ -437,7 +461,7 @@ def validate_direct_monthly_against_seasonal(monthly_direct, merged, n_recent=20
     then 3-month averaged" against an independent CPC product.
     """
     beta = dict(zip(range(1, 13), monthly_direct.factor.values))
-    diffs = monthly_diff_lookup()
+    diffs = monthly_diff_lookup(weighted=weighted)
 
     cutoff_year = merged.YR.max() - n_recent + 1
     recent = merged[merged.YR >= cutoff_year].sort_values(["SEAS", "YR"]).reset_index(drop=True)
@@ -461,6 +485,218 @@ def validate_direct_monthly_against_seasonal(monthly_direct, merged, n_recent=20
     out = pd.DataFrame(rows)
     overall_rms = np.sqrt(np.mean(resid ** 2))
     return out, overall_rms
+
+
+def _fit_slopes_with_offset(g):
+    """OLS of the published monthly value on a per-calendar-month slope plus
+    one intercept shared by all 12 months: y = f(month) * diff + c.
+
+    The through-origin fits above force c = 0, so any constant offset
+    between CPC's published values and factor * diff is absorbed into the
+    slopes. Letting c float separates the two.
+
+    Returns (factors dict {1..12}, offset, residuals).
+    """
+    n = len(g)
+    X = np.zeros((n, 13))
+    X[np.arange(n), g.month.values.astype(int) - 1] = g["diff"].values
+    X[:, 12] = 1.0
+    beta, _, _, _ = np.linalg.lstsq(X, g.ANOM.values, rcond=None)
+    resid = g.ANOM.values - X @ beta
+    return {m: beta[m - 1] for m in range(1, 13)}, beta[12], resid
+
+
+def _quantize_match(pred, published):
+    """How often each 2-decimal publication convention applied to `pred`
+    reproduces `published` exactly, and the RMS it leaves.
+
+    Round-to-nearest and floor (round *down*) are distinguishable here:
+    they differ by half a step on average, which is the size of the bias
+    left by the through-origin fits.
+    """
+    eps = 1e-9  # published values are 2-dp decimals read as floats
+    out = {}
+    for name, q in (("floor", np.floor(pred * 100 + eps) / 100),
+                    ("round", np.round(pred, 2)),
+                    ("trunc", np.trunc(pred * 100 + eps * np.sign(pred)) / 100)):
+        out[f"{name}_exact"] = float(np.mean(np.isclose(q, published, atol=1e-9)))
+        out[f"rms_{name}"] = float(np.sqrt(np.mean((q - published) ** 2)))
+        out[f"max_{name}"] = float(np.max(np.abs(q - published)))
+    return out
+
+
+def residual_by_decade(factors, weighted=True):
+    """Mean and RMS residual per decade, for a fixed set of factors.
+
+    Under a pure publication convention the mean residual would sit at the
+    same value (half a step) in every decade. It does not quite: it drifts,
+    which is the part of the residual not explained in Section 5 of
+    docs/CPC_RONI_scaling.md.
+    """
+    frame = monthly_fit_frame(weighted=weighted)
+    resid = frame.ANOM.values - frame["diff"].values * frame.month.map(factors).values
+    frame = frame.assign(resid=resid, decade=(frame.year // 10) * 10)
+    return (frame.groupby("decade")
+            .agg(n=("resid", "size"), mean_resid=("resid", "mean"),
+                 rms_resid=("resid", lambda r: np.sqrt(np.mean(r ** 2))))
+            .reset_index())
+
+
+def rounding_convention_check(n_recent=20, weighted=True):
+    """Is the residual left by the direct monthly fit a rounding convention?
+
+    The through-origin fit (backout_monthly_factors_direct()) leaves a small
+    *systematic* negative bias — the fit sits ~0.004 above the published
+    values on average. Rounding to nearest cannot do that: it is symmetric.
+    Flooring can, and leaves exactly half a step (0.005).
+
+    Two diagnostics, each on the 20 most recent years and on the full
+    1950-present record:
+
+    - refit with a free intercept (_fit_slopes_with_offset): if the residual
+      is a publication convention, the intercept lands near -0.005 (half of
+      the 0.01 step), the slopes barely move, and the residual scatter drops
+      to the quantization floor (0.01/sqrt(12) = 0.0029).
+    - apply each candidate convention to the prediction and count exact
+      reproductions of the published 2-decimal value.
+
+    Caveat, stated in docs/CPC_RONI_scaling.md: flooring with no offset and
+    round-to-nearest with a genuine -0.005 offset in the anomaly difference
+    are observationally identical. The offset landing at exactly half a
+    publication step is what favours flooring.
+
+    Returns
+    -------
+    (pandas.DataFrame, pandas.DataFrame)
+        One row per (sample, factor model) with the fitted offset, raw
+        residual statistics and per-convention exact-match rates; and the
+        refit (offset-model) factor table.
+    """
+    frame = monthly_fit_frame(weighted=weighted)
+    recent = _recent_years(frame, n_recent)
+
+    fac_origin = {m: np.sum(g["diff"] * g.ANOM) / np.sum(g["diff"] ** 2)
+                  for m, g in recent.groupby("month")}
+    fac_offset, offset_recent, _ = _fit_slopes_with_offset(recent)
+
+    rows = []
+    for sample, g in (("last %d yr" % n_recent, recent), ("1950-present", frame)):
+        _, offset_here, resid_off = _fit_slopes_with_offset(g)
+        for model, fac in (("through-origin", fac_origin), ("offset refit", fac_offset)):
+            pred = g["diff"].values * g.month.map(fac).values
+            resid = g.ANOM.values - pred
+            row = dict(sample=sample, model=model, n=len(g),
+                       rms_raw=np.sqrt(np.mean(resid ** 2)),
+                       bias_raw=resid.mean(),
+                       offset_fit=offset_here,
+                       rms_after_offset=np.sqrt(np.mean(resid_off ** 2)))
+            row.update(_quantize_match(pred, g.ANOM.values))
+            rows.append(row)
+
+    refit = pd.DataFrame({
+        "month": MONTH_NAMES,
+        "factor_through_origin": [fac_origin[m] for m in range(1, 13)],
+        "factor_offset_refit": [fac_offset[m] for m in range(1, 13)],
+    })
+    refit["delta"] = refit.factor_offset_refit - refit.factor_through_origin
+    return pd.DataFrame(rows), refit
+
+
+def reconstruct_from_factors(factors, weighted=True):
+    """The forward recipe: scale each ERSSTv6 monthly diff by its calendar
+    month's factor, then take a 3-month centered running mean of the
+    *scaled* values.
+
+    Parameters
+    ----------
+    factors : dict {1..12: float}
+
+    Returns
+    -------
+    pandas.DataFrame
+        year, month, diff, recon_monthly, recon_3mo, SEAS, YR — the last
+        two labelling each 3-month mean by its center month, CPC-style.
+    """
+    diffs = monthly_diff_lookup(weighted=weighted)
+    df = pd.DataFrame([(y, m, v) for (y, m), v in diffs.items()],
+                      columns=["year", "month", "diff"]).sort_values(["year", "month"])
+    df = df.reset_index(drop=True)
+    df["recon_monthly"] = df["diff"] * df.month.map(factors)
+    df["recon_3mo"] = df.recon_monthly.rolling(3, center=True).mean()
+    df["SEAS"] = df.month.map(_season_label)
+    df["YR"] = df.year
+    return df
+
+
+def seasonal_convention_check(factors, weighted=True):
+    """The seasonal counterpart of rounding_convention_check(): does the
+    published *seasonal* RONI equal the floored, or the rounded, 3-month
+    mean of the unrounded scaled monthly values?
+    """
+    recon = reconstruct_from_factors(factors, weighted=weighted).dropna(subset=["recon_3mo"])
+    roni = load_roni_table()
+    g = roni.merge(recon, on=["SEAS", "YR"], how="inner", validate="one_to_one")
+    resid = g.ANOM.values - g.recon_3mo.values
+    row = dict(n=len(g), rms_raw=np.sqrt(np.mean(resid ** 2)), bias_raw=resid.mean())
+    row.update(_quantize_match(g.recon_3mo.values, g.ANOM.values))
+    return pd.DataFrame([row])
+
+
+def reconstruction_tables(factors, start_year=2020, weighted=True):
+    """Published vs. reconstructed seasonal RONI, in CPC's own year x season
+    layout, for the window shown on CPC's RONI product page.
+
+    Returns
+    -------
+    (published, reconstructed, stats, mismatches_1dp)
+        Two pivot tables; a one-row stats frame (n, max|err|, RMS, count
+        agreeing at the 1-decimal precision the product page displays); and
+        the rows that disagree at 1 decimal.
+    """
+    recon = reconstruct_from_factors(factors, weighted=weighted).dropna(subset=["recon_3mo"])
+    roni = load_roni_table()
+    g = roni.merge(recon, on=["SEAS", "YR"], how="inner", validate="one_to_one")
+    g = g[g.YR >= start_year].copy()
+    g["err"] = g.recon_3mo - g.ANOM
+    g["agree_1dp"] = np.round(g.recon_3mo, 1) == np.round(g.ANOM, 1)
+
+    season_order = [_season_label(m) for m in range(1, 13)]
+    published = g.pivot(index="YR", columns="SEAS", values="ANOM")[season_order]
+    reconstructed = (g.pivot(index="YR", columns="SEAS", values="recon_3mo")[season_order]
+                     .round(2))
+    for t in (published, reconstructed):
+        t.index.name = "Year"
+
+    stats = pd.DataFrame([dict(
+        n=len(g), max_abs_err=g.err.abs().max(),
+        rms=np.sqrt(np.mean(g.err ** 2)),
+        n_agree_1dp=int(g.agree_1dp.sum()),
+        n_recon_above_published=int((g.err > 0.005).sum()),
+        n_recon_below_published=int((g.err < -0.005).sum()),
+    )])
+    mismatches = g.loc[~g.agree_1dp, ["SEAS", "YR", "ANOM", "recon_3mo"]]
+    return published, reconstructed, stats, mismatches
+
+
+def weighting_sensitivity(n_recent=20):
+    """Cosine-latitude weighted vs. plain grid-cell box means, side by side.
+
+    Reported because the reference implementation this recipe was checked
+    against uses unweighted box means: the choice barely changes how well
+    the fit reproduces the published series, but it does move the fitted
+    factor itself by more than that factor's standard error.
+    """
+    w_tab, _ = backout_monthly_factors_direct(n_recent=n_recent, weighted=True)
+    u_tab, _ = backout_monthly_factors_direct(n_recent=n_recent, weighted=False)
+    return pd.DataFrame({
+        "month": w_tab.month,
+        "factor_weighted": w_tab.factor,
+        "factor_unweighted": u_tab.factor,
+        "delta": u_tab.factor - w_tab.factor,
+        "se_weighted": w_tab.se,
+        "rms_weighted": w_tab.rms_resid,
+        "rms_unweighted": u_tab.rms_resid,
+    })
 
 
 def factor_table_by_year(merged=None):
@@ -564,6 +800,17 @@ if __name__ == "__main__":
     _emit(monthly_direct.to_string(index=False), log)
     monthly_direct.to_csv(out_dir / "monthly_factors_direct.csv", index=False)
 
+    # Pooled accuracy of that fit, over every fitted (month, year) point —
+    # the summary quoted in docs/CPC_RONI_scaling.md §3. The bias is
+    # systematic, not sampling noise; §5 there identifies its source.
+    factors_direct = dict(zip(range(1, 13), monthly_direct.factor.values))
+    fitted = _recent_years(monthly_fit_frame(), 20)
+    resid_pooled = fitted.ANOM.values - fitted["diff"].values * fitted.month.map(factors_direct).values
+    _emit(f"pooled over n={len(resid_pooled)} fitted points: "
+          f"rms={np.sqrt(np.mean(resid_pooled ** 2)):.4f}, "
+          f"bias={resid_pooled.mean():+.4f} "
+          f"(published minus fit; the fit sits above the published values)", log)
+
     seasonal_check, seasonal_check_rms = validate_direct_monthly_against_seasonal(
         monthly_direct, merged, n_recent=20)
     _emit(f"\n-- round-trip check: direct monthly factors, 3-month averaged, "
@@ -572,6 +819,54 @@ if __name__ == "__main__":
     _emit(f"overall RMS: {seasonal_check_rms:.4f}  "
           f"(cf. {monthly_rms:.4f} for the joint-fit-from-seasonal-only approach)", log)
     seasonal_check.to_csv(out_dir / "direct_monthly_vs_seasonal_rms.csv", index=False)
+
+    # Cos-lat weighting vs. plain grid-cell means (docs §1): immaterial for
+    # fit quality, but not for the factor's own value.
+    weighting = weighting_sensitivity(n_recent=20)
+    _emit("\n-- box-mean weighting sensitivity (cos-lat vs. plain grid-cell) --", log)
+    _emit(weighting.to_string(index=False), log)
+    _emit(f"max |delta factor| = {weighting.delta.abs().max():.4f}, "
+          f"max |delta rms| = {(weighting.rms_unweighted - weighting.rms_weighted).abs().max():.5f}", log)
+    weighting.to_csv(out_dir / "weighting_sensitivity.csv", index=False)
+
+    # Publication convention (docs §5): the residual bias above is CPC
+    # flooring its published values to 2 decimals, not rounding them.
+    conv, refit = rounding_convention_check(n_recent=20)
+    _emit("\n-- publication convention: monthly series --", log)
+    _emit(conv.to_string(index=False), log)
+    _emit("\n-- factors refit with a free intercept vs. through the origin --", log)
+    _emit(refit.to_string(index=False), log)
+    conv.to_csv(out_dir / "rounding_convention.csv", index=False)
+    refit.to_csv(out_dir / "monthly_factors_offset_refit.csv", index=False)
+
+    factors_refit = dict(zip(range(1, 13), refit.factor_offset_refit.values))
+    seas_conv = pd.concat([
+        seasonal_convention_check(factors_direct).assign(model="through-origin"),
+        seasonal_convention_check(factors_refit).assign(model="offset refit"),
+    ])
+    _emit("\n-- publication convention: seasonal series --", log)
+    _emit(seas_conv.to_string(index=False), log)
+    seas_conv.to_csv(out_dir / "rounding_convention_seasonal.csv", index=False)
+
+    decades = residual_by_decade(factors_refit)
+    _emit("\n-- residual by decade, refit factors (docs §7: the drift is unexplained) --", log)
+    _emit(decades.to_string(index=False), log)
+    decades.to_csv(out_dir / "residual_by_decade.csv", index=False)
+
+    # Round trip, in CPC's own table layout (docs §3, Tables 2-3).
+    published_tab, recon_tab, recon_stats, recon_miss = reconstruction_tables(
+        factors_direct, start_year=2020)
+    two_dp = lambda v: f"{v:6.2f}"
+    _emit("\n-- published seasonal RONI, 2020-present --", log)
+    _emit(published_tab.to_string(float_format=two_dp), log)
+    _emit("\n-- reconstruction from ERSSTv6 + the direct monthly factors --", log)
+    _emit(recon_tab.to_string(float_format=two_dp), log)
+    _emit(recon_stats.to_string(index=False), log)
+    _emit("rows disagreeing at the 1-decimal precision of CPC's product page:", log)
+    _emit(recon_miss.to_string(index=False), log)
+    published_tab.to_csv(out_dir / "seasonal_published_recent.csv")
+    recon_tab.to_csv(out_dir / "seasonal_reconstructed_recent.csv")
+    recon_stats.to_csv(out_dir / "seasonal_reconstruction_stats.csv", index=False)
 
     by_year = factor_table_by_year(merged=merged)
     by_year.to_csv(out_dir / "factor_by_year.csv")

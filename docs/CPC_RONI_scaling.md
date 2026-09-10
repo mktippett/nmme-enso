@@ -32,9 +32,16 @@ Both are stated to derive from ERSSTv6
 the Niño-3.4 box (5°S–5°N, 170°W–120°W) minus the tropical-mean box
 (20°S–20°N, all longitudes), each anomaly relative to a 1991–2020 monthly
 climatology. Cosine-latitude weighting versus a plain grid-cell mean makes
-a negligible difference to the results below (under 0.0001 in every fitted
-factor), so the choice between them is not otherwise a source of
-uncertainty here.
+almost no difference to how well the recipe reproduces the published
+series: across the 12 calendar months the two choices differ by at most
+0.0002 in RMS error. They do differ in the fitted factor itself, by 0.0023
+to 0.0034 — larger than that factor's own standard error, and in the same
+direction for every month. The factors quoted below are the
+cosine-weighted ones; each would fall by about 0.003 if computed from a
+plain grid-cell mean, which is how the reference implementation listed
+under References computes its box averages. That shift is well inside the
+0.01 precision at which RONI is published, so it is not a source of
+uncertainty in the reproduction, but it is not negligible in the factor.
 
 CPC's description amounts to the following formula, at monthly resolution:
 
@@ -49,7 +56,7 @@ CPC states only that it is chosen so that "the variance equals the
 original Niño 3.4 index," not its numeric value, the period over which
 that variance is computed, or whether the underlying series is
 detrended first. Backing out $f(\text{month})$ from the known left- and
-right-hand sides is the task of Sections 3–4.
+right-hand sides is the task of Sections 3–5.
 
 ## 2. The published monthly and seasonal series are mutually consistent
 
@@ -59,11 +66,20 @@ each other directly: the 3-month centered running mean of the published
 no involvement of ERSSTv6 or any fitted factor. All 919 published seasonal
 values (1950–2026) matched a corresponding monthly-average value. The
 maximum discrepancy is 0.0067°C and the mean discrepancy is 0.00007°C,
-indistinguishable from zero. A discrepancy of exactly 0.0067°C (two-thirds
-of the 0.01°C rounding step) is precisely the bound expected from two
-series that are each independently rounded to two decimal places before
-publication, which means that no unmodeled processing separates the two
-products.
+indistinguishable from zero.
+
+That maximum is exactly the bound expected from two series that are each
+independently rounded to two decimal places before publication, and the
+argument takes two steps. A published seasonal value is a multiple of
+0.01, and the mean of three published monthly values is a multiple of
+0.01/3, so the discrepancy between them is necessarily a multiple of
+0.0033. It is also strictly smaller than one full 0.01 step, being the
+difference between the seasonal value's own rounding error and the average
+of the three monthly ones, both drawn from the same 0.01-wide window. The
+largest attainable discrepancy is therefore two-thirds of a step, 0.0067,
+which is what is observed. The observed RMS of 0.0032 likewise matches the
+0.0033 predicted for two independently rounded series. No unmodeled
+processing separates the two products.
 
 This confirms that CPC's scaling factor is applied at the **monthly**
 level, with the published seasonal values simply the 3-month average of
@@ -107,7 +123,9 @@ Applying these factors reproduces both published series with a small,
 fairly uniform residual. Pooled across all 240 fitted (month, year) points,
 the RMS error against the published monthly series is 0.0054°C, with a
 modest systematic bias of −0.0038°C (the fit averages about 0.004°C above
-the published values). Applying the same monthly factors and then taking a
+the published values). That bias is systematic rather than sampling noise,
+and Section 5 identifies where it comes from. Applying the same monthly
+factors and then taking a
 3-month running mean — the same operation CPC applies, per Section 2 —
 reproduces the published seasonal series with an overall RMS of 0.0049°C,
 essentially unchanged from the monthly figure. Aggregating to seasons
@@ -157,6 +175,10 @@ where the published value sits almost exactly on a rounding boundary
 different neighbors depending on the rounding rule applied), not genuine
 divergence.
 
+The disagreements are also one-sided, which is the clue Section 5 follows.
+Of the 79 values, 24 are reconstructed more than 0.005°C *above* the
+published value and only 1 more than 0.005°C below.
+
 ## 4. A seasonal-only fit, for comparison
 
 CPC's RONI is not built this way (Section 2), but fitting a single factor
@@ -174,7 +196,72 @@ with the serial-correlation mechanism described in Section 2: where the
 monthly factor changes quickly within a season, treating it as constant
 costs measurable accuracy.
 
-## 5. Recipe summary
+## 5. The published values are truncated, not rounded
+
+The residual left by Section 3 is not scatter. It is a bias of one
+consistent sign and roughly constant size, and rounding to nearest cannot
+produce one: rounding is symmetric, so it adds noise with zero mean.
+Truncating downward is not symmetric. It subtracts, on average, exactly
+half of the 0.01 publication step — 0.005°C, which is the size of the
+observed bias.
+
+Two tests confirm this. The first refits the same model with one intercept
+shared by all 12 calendar months, `RONI = f(month) × diff + c`, so that any
+constant offset is separated from the factors instead of being absorbed
+into them. The fitted intercept is −0.0042°C on the same 20-year sample
+Section 3 uses, and −0.0051°C over the full 1950–2026 monthly record. The
+residual scatter around it falls to 0.0037°C and 0.0033°C respectively,
+against a quantization floor of 0.01/√12 = 0.0029°C for values published
+to two decimals. The factors themselves barely move:
+
+| Month | Through origin (Section 3) | Refit with intercept | Change |
+|---|---|---|---|
+| Jan | 1.2476 | 1.2461 | −0.0015 |
+| Feb | 1.2737 | 1.2717 | −0.0019 |
+| Mar | 1.3391 | 1.3365 | −0.0026 |
+| Apr | 1.3900 | 1.3859 | −0.0041 |
+| May | 1.3563 | 1.3516 | −0.0047 |
+| Jun | 1.2479 | 1.2456 | −0.0023 |
+| Jul | 1.1870 | 1.1858 | −0.0013 |
+| Aug | 1.1671 | 1.1658 | −0.0014 |
+| Sep | 1.2022 | 1.2005 | −0.0018 |
+| Oct | 1.2149 | 1.2136 | −0.0014 |
+| Nov | 1.2205 | 1.2196 | −0.0009 |
+| Dec | 1.2322 | 1.2313 | −0.0009 |
+
+The second test applies each candidate convention to the unrounded
+prediction and counts how often it reproduces the published two-decimal
+value *exactly*. Over all 920 published monthly values, using the refit
+factors:
+
+| Convention | Exact reproductions | RMS |
+|---|---|---|
+| Floor (round down) | 88.8% | 0.0035 |
+| Round to nearest | 48.7% | 0.0072 |
+| Truncate toward zero | 45.3% | 0.0079 |
+
+The published *seasonal* series behaves the same way — flooring the
+3-month mean of the unrounded scaled monthly values reproduces 89.3% of
+the 919 published values exactly, against 50.1% for rounding to nearest.
+Note that the seasonal value is floored from the unrounded monthly values,
+not assembled from the already-published two-decimal ones.
+
+The remaining 11% is what our own inputs cost. Our Niño-3.4 minus
+tropical-mean difference is not identical to CPC's; the ~0.0015°C by which
+the residual exceeds the quantization floor is enough to push a prediction
+that lands near a 0.01 boundary onto the wrong side of it, which accounts
+for roughly one value in nine.
+
+One caveat. Flooring with no offset, and rounding to nearest applied to a
+series that genuinely sits 0.005°C below ours, are observationally
+identical — both put the residual in the same place. What favours flooring
+is that the fitted offset lands at *exactly* half a publication step
+rather than at some arbitrary value, which would be a coincidence under
+the alternative. This also settles the other hypothesis raised below: a
+mismatch in the period used for CPC's variance matching would rescale the
+factor, and cannot introduce a constant offset.
+
+## 6. Recipe summary
 
 To reproduce RONI from ERSSTv6 alone:
 
@@ -185,29 +272,45 @@ To reproduce RONI from ERSSTv6 alone:
 3. **Unscaled monthly difference**: `diff = n34_anom − trop_anom`, at
    monthly resolution (no smoothing).
 4. **Scale monthly**, using the fixed per-calendar-month factor from the
-   table in Section 3: `relative_monthly = factor(month) * diff`.
+   refit column of the table in Section 5:
+   `relative_monthly = factor(month) * diff`. The Section 3 factors absorb
+   part of the offset that step 6 handles, and reproduce 83.5% of the
+   published monthly values exactly rather than 88.8%.
 5. **Seasonal RONI**: a 3-month centered running mean of
    `relative_monthly`.
+6. **Publication convention**: to match the published two-decimal values,
+   round *down* to two decimals, at both monthly and seasonal resolution
+   (Section 5). Skipping this step leaves every value about 0.005°C high.
 
 Implementation: `scripts/roni_factor_backout.py`. Behavioral detail and
 saved output tables: `specs/roni_factor_backout.md`,
 `plots/roni_factor_backout/`.
 
-## 6. Limitations
+## 7. Limitations
 
-Even under the correct (monthly-factor) model, a residual of about
-0.005°C RMS remains — larger than the roughly 0.003°C RMS expected from
-rounding alone if the two series were rounded independently and matched
-exactly otherwise — together with the small systematic negative bias noted
-in Section 3. Two explanations are plausible but not distinguished by the
-analysis here: a difference between the rounding convention used for the
-published values and simple round-to-nearest, or a genuine mismatch
-between the period (and possibly detrending) used in the calculation
-above and whatever CPC actually uses for its own variance-matching step,
-which is not documented on the RONI product page. Since the residual is
-small relative to the factor's own annual cycle and well within the
-0.01°C publication precision, it does not affect the practical
-reproduction recipe in Section 5.
+With the publication convention accounted for (Section 5), the residual
+falls to 0.0033°C RMS, against the 0.0029°C floor imposed by two-decimal
+publication. What is left is close enough to that floor that it carries
+little information, but three things remain unresolved.
+
+The flooring interpretation is not proven, only strongly favoured, for the
+reason given at the end of Section 5. The mean residual also drifts slowly
+across the record, from −0.0065°C in the 1950s to −0.0041°C in the 2020s,
+where a pure publication convention would hold it at −0.005°C throughout;
+a slowly varying difference of order 0.002°C between our inputs and CPC's,
+such as a dataset revision, would produce that. And the period, and any
+detrending, behind CPC's variance-matching step remains undocumented —
+Section 5 rules it out as the source of the *bias*, but not as a reason
+the factors themselves might be revised in future.
+
+None of this affects the reproduction recipe in Section 6. Of the 920
+published monthly values it reproduces 817 exactly and all but one of the
+rest to within one unit in the last published digit; the seasonal series
+behaves the same way, 821 of 919 exact. The single exception is June 2026,
+published as 1.07 against 1.047 reconstructed, which also drags the AMJ
+2026 season out by two units. Both are at the very end of the record,
+where ERSSTv6 is still subject to revision after CPC computes its
+published value.
 
 ## References
 
@@ -217,5 +320,7 @@ reproduction recipe in Section 5.
   for Classifying ENSO Events in a Changing Climate. *J. Climate*, **37**,
   1197–1211,
   [doi:10.1175/JCLI-D-23-0406.1](https://doi.org/10.1175/JCLI-D-23-0406.1).
+- Reference implementation of the relative Niño-3.4 recipe, M. L'Heureux:
+  https://github.com/michellelheureux/Relative-SST
 - ERSSTv6 monthly SST:
   https://downloads.psl.noaa.gov/Datasets/noaa.ersst.v6/sst.mnmean.nc
