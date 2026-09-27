@@ -73,6 +73,36 @@ N34_LON = slice(190, 240)
 # ---------------------------------------------------------------------------
 TROPICS_LAT = slice(-20, 20)
 
+# Common ocean mask for the tropical mean ("mask A", decided 2026-09-27; see
+# docs/relative_nino34.md §5 for the evidence). The tropical mean is taken
+# over the 20S-20N cells that are ocean in EVERY NMME group that supplies a
+# land mask — a cell counts as ocean in a group if it has data at any
+# (S, M, L); the mask is the intersection across groups. The same cells are
+# used for all 7 models.
+#
+# TROPICS_MASK_EXCLUDE_GROUPS do not supply a land mask: the CanSIPS groups
+# fill land with smooth SST-like values (~24-26 C over the Amazon; NaN
+# fraction 0.000 in 20S-20N vs 0.23-0.26 for the other groups). This is a
+# source-data defect in NMME-zarr / the IRI archive; the common mask is
+# still the index definition here, not a workaround — it would be kept even
+# if those groups were land-masked at the source (model-to-model common
+# sample). tropics_ocean_mask() asserts both properties, so a change in the
+# store (e.g. CanSIPS land becomes NaN) fails loudly rather than silently
+# changing the mask.
+#
+# Known, deliberately NOT masked: ~330 cells per model in COLA-RSMAS-CCSM4
+# and COLA-RSMAS-CESM1, almost all adjacent to land, whose climatology is
+# >3 C below the cross-model median (coldest climatology in the mask
+# ~11.5 C; colder cells, down to ~3 C, fall outside the mask; present
+# identically in the IRI source, e.g. CCSM4 at 19S 122E ~10 C). Their
+# anomalies still track the other models (median corr 0.92, damped ~0.7x),
+# and removing them changes every model's n34r scaling factor by only
+# ~0.5-0.7% — the same for clean models as for CCSM4/CESM1 — so they have
+# no model-specific effect. See docs/relative_nino34.md §5.
+TROPICS_MASK_EXCLUDE_GROUPS = {"CanSIPS-IC4-CanESM5", "CanSIPS-IC4-GEM52NEMO"}
+# Sanity range for the 20S-20N land (NaN) fraction of a land-masked group
+TROPICS_LAND_FRAC_RANGE = (0.18, 0.30)
+
 # ---------------------------------------------------------------------------
 # Analysis / climatology period
 # ---------------------------------------------------------------------------
@@ -227,16 +257,62 @@ def _n34_average(x):
     return y
 
 
-def _tropics_average(x):
-    """Cosine-latitude-weighted tropical-mean average over X, Y (20S-20N, all lon).
+def tropics_ocean_mask(store=None):
+    """Common 20S-20N ocean mask (Y, X) bool for the tropical mean ("mask A").
 
-    Land points are NaN in the underlying grid; weighted().mean() skips NaNs
-    by default for floating dtypes.
+    True where every group NOT in TROPICS_MASK_EXCLUDE_GROUPS has data at
+    some (S, M, L). See the TROPICS_MASK_EXCLUDE_GROUPS comment for the
+    rationale. Reads the full store (one notnull pass per group), so it is
+    only called on a load_nino34_ssta() cache miss.
+
+    Asserts, per group, that land-masked groups have a 20S-20N NaN fraction
+    in TROPICS_LAND_FRAC_RANGE and excluded groups have none — so a store
+    change that alters either property stops here instead of silently
+    changing the index.
     """
     import numpy as np
-    x = x.sortby("Y")
+    import xarray as xr
+
+    store = Path(store or STORE_SST)
+    valid = {}
+    for group in nmme_groups(store):
+        x = xr.open_zarr(str(store), group=group, decode_times=False).sst
+        v = x.sortby("Y").sel(Y=TROPICS_LAT).notnull().any(["S", "M", "L"]).compute()
+        land_frac = float(1 - v.mean())
+        if group in TROPICS_MASK_EXCLUDE_GROUPS:
+            assert land_frac == 0, (
+                f"{group}: expected no land NaNs (land filled with SST-like "
+                f"values), found land fraction {land_frac:.3f} — revisit "
+                f"TROPICS_MASK_EXCLUDE_GROUPS")
+        else:
+            lo, hi = TROPICS_LAND_FRAC_RANGE
+            assert lo <= land_frac <= hi, (
+                f"{group}: 20S-20N land (NaN) fraction {land_frac:.3f} outside "
+                f"{TROPICS_LAND_FRAC_RANGE} — land mask missing or changed")
+            valid[group] = v
+    mask = xr.concat(list(valid.values()), dim="group", join="exact").all("group")
+    mask = mask.drop_vars([c for c in mask.coords if c not in ("Y", "X")])
+    print(
+        f"  tropics_ocean_mask: {int(mask.sum())} ocean cells in 20S-20N "
+        f"(intersection of {len(valid)} land-masked groups; excluded "
+        f"{sorted(TROPICS_MASK_EXCLUDE_GROUPS)})"
+    )
+    return mask
+
+
+def _tropics_average(x, ocean_mask):
+    """Cosine-latitude-weighted tropical-mean average over X, Y (20S-20N, all lon),
+    restricted to ocean_mask (tropics_ocean_mask()) — the same cells for
+    every model. Cells inside the mask that are NaN for a given sample (a
+    handful for GFDL-SPEAR, whose land mask varies by ~8 cells between
+    samples) are skipped by weighted().mean().
+    """
+    import numpy as np
+    import xarray as xr
+    x = x.sortby("Y").sel(Y=TROPICS_LAT)
+    x, ocean_mask = xr.align(x, ocean_mask, join="exact")
     weights = np.cos(np.deg2rad(x.Y))
-    y = x.sel(Y=TROPICS_LAT).weighted(weights).mean(["X", "Y"])
+    y = x.where(ocean_mask).weighted(weights).mean(["X", "Y"])
     y.attrs = x.attrs.copy()
     return y
 
@@ -339,7 +415,9 @@ def load_nino34_ssta(store=None, use_cache=True):
 
     Reads every model group in the SST zarr store, reduces to the cosine-
     weighted Niño-3.4 box average and the cosine-weighted tropical-mean box
-    average (20S-20N, all lon), computes cftime target (valid) time, and
+    average (20S-20N, all lon, over the common ocean mask from
+    tropics_ocean_mask() — see TROPICS_MASK_EXCLUDE_GROUPS), computes
+    cftime target (valid) time, and
     removes a per-model, per-init-month ensemble-mean climatology from each
     to form ssta and ssta_trop. ssta_rel = ssta - ssta_trop is the unscaled
     relative Niño-3.4 index (L'Heureux et al. 2024, J. Climate) —
@@ -370,7 +448,8 @@ def load_nino34_ssta(store=None, use_cache=True):
     between successive runs — only new forecast starts (and the trailing
     RECHECK_TAIL=2 starts update_archive.py rechecks) ever change. When
     use_cache=True (default), the returned ds is cached to
-    CACHE_DIR/nino34_ssta.nc, keyed on _store_fingerprint(store); a
+    CACHE_DIR/nino34_ssta.nc, keyed on _store_fingerprint(store) plus the
+    tropical-mean mask definition (TROPICS_LAT, TROPICS_MASK_EXCLUDE_GROUPS); a
     matching fingerprint on the next call skips recomputation entirely and
     loads the small cached dataset instead. Pass use_cache=False to force
     a fresh read (e.g. after suspecting the fingerprint missed a change).
@@ -396,7 +475,16 @@ def load_nino34_ssta(store=None, use_cache=True):
     import xarray as xr
 
     store = Path(store or STORE_SST)
-    fingerprint = _store_fingerprint(store)
+    # Key the cache on the tropical-mean definition too, not just the store:
+    # a change to the mask rule must invalidate the cached trop/ssta_trop.
+    fingerprint = {
+        "store": _store_fingerprint(store),
+        "tropics_mask": {
+            "lat": [TROPICS_LAT.start, TROPICS_LAT.stop],
+            "exclude_groups": sorted(TROPICS_MASK_EXCLUDE_GROUPS),
+            "rule": "A: intersection of land-masked groups' any-(S,M,L) valid cells",
+        },
+    }
 
     cache_nc = CACHE_DIR / "nino34_ssta.nc"
     cache_fp = CACHE_DIR / "nino34_ssta.fingerprint.json"
@@ -412,12 +500,13 @@ def load_nino34_ssta(store=None, use_cache=True):
             return ds
         print(f"  load_nino34_ssta: cache stale ({cache_nc.name}), recomputing")
 
+    ocean_mask = tropics_ocean_mask(store)
     ds_list = []
     for group in nmme_groups(store):
         g = xr.open_zarr(str(store), group=group, decode_times=False)
         sst_full = g.sst
         n34 = _n34_average(sst_full).astype(np.float64).compute()
-        trop = _tropics_average(sst_full).astype(np.float64).compute()
+        trop = _tropics_average(sst_full, ocean_mask).astype(np.float64).compute()
         g["sst"] = n34
         g["trop"] = trop
         g = g.drop_vars(["X", "Y", "_filled", "T"])

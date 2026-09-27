@@ -62,8 +62,11 @@ trailing `RECHECK_TAIL=2` starts.
 - `load_nino34_ssta()` → `cache/nino34_ssta.nc`, keyed on
   `config._store_fingerprint(store)`: per model group, `S` array size, last
   `S` value, and the `last_updated` zarr attribute — cheap metadata reads,
-  never the sst data itself. A mismatch (new/rechecked starts) triggers a
-  full recompute and cache rewrite.
+  never the sst data itself — **plus** the tropical-mean mask definition
+  (`TROPICS_LAT` bounds, `TROPICS_MASK_EXCLUDE_GROUPS`, a rule label), so
+  a change to how `trop` is defined also invalidates the cache. A mismatch
+  (new/rechecked starts, or a mask-definition change) triggers a full
+  recompute and cache rewrite.
 - `config.rel_scaling_factor()` has **no disk cache of its own** — it's a
   `groupby('S.month').std('S')` reduction over the already-cached (small)
   verification Dataset, cheap enough to recompute every run.
@@ -117,8 +120,22 @@ future script needing the Niño-3.4 index/anomaly) and does the following,
    average (cosine-latitude-weighted mean over `config.N34_LON` x
    `config.N34_LAT`) *and* to the tropical-mean box average
    (cosine-latitude-weighted mean over `config.TROPICS_LAT`, all
-   longitudes; land points are NaN and skipped by the weighted mean), tag a
-   `model` coordinate, and merge all groups.
+   longitudes, restricted to the common ocean mask from
+   `config.tropics_ocean_mask()` — see below), tag a `model` coordinate,
+   and merge all groups.
+
+   **Common ocean mask ("mask A", 2026-09-27).** Before the per-group loop,
+   `tropics_ocean_mask()` builds a `(Y, X)` boolean mask: for every group
+   *not* in `config.TROPICS_MASK_EXCLUDE_GROUPS`, a cell is ocean if
+   `sst.notnull().any(["S", "M", "L"])`; the mask is the intersection over
+   those groups (currently 5 groups → 10,859 cells in 20S-20N). The same
+   cells are used for every model's tropical mean (`x.where(mask)`, aligned
+   with `join="exact"`); cells inside the mask that are NaN for a given
+   sample (a few for GFDL-SPEAR) are skipped by `weighted().mean()`. The
+   excluded groups (both CanSIPS) fill land with SST-like values rather
+   than NaN, so relying on NaN-skipping (the pre-2026-09-27 behavior)
+   averaged ~3,400 land cells into their tropical mean. Full rationale and
+   impact numbers: `docs/relative_nino34.md` §5.
 2. Compute `target = L + S` **while `S` is still a raw float** — this must
    happen before any cftime decoding, since decoding converts `S` to a
    cftime object and `L + S` would no longer be a plain float offset.
@@ -647,6 +664,8 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
 | Seasonal window | `rolling(L=3, center=True)` | Centered (not trailing) so the season label (e.g. DJF) matches the NOAA ONI overlapping-season convention, which is also centered |
 | `SEASON_INITIALS` | `"JFMAMJJASOND"` | Single-letter month initials (index 0 = January) used to build 3-letter season labels |
 | `config.TROPICS_LAT` | `slice(-20, 20)`, all longitudes | Tropical-mean region for the relative Niño-3.4 index, per L'Heureux et al. (2024); van Oldenborgh et al. (2021) originated the index, the paper tested 15-30° alternatives and confirmed 20°S-20°N |
+| `config.TROPICS_MASK_EXCLUDE_GROUPS` / tropical-mean ocean mask | `{"CanSIPS-IC4-CanESM5", "CanSIPS-IC4-GEM52NEMO"}` excluded from mask construction; mask = intersection of the other groups' any-`(S,M,L)`-valid cells, applied to all 7 models | The CanSIPS groups carry no land NaNs (land filled with ~24-26°C values), so they cannot contribute a land mask and would otherwise average land into the tropical mean. The common mask is the index definition (same cells for every model), kept even if the source were fixed. The IRI NMME LSMASK was rejected: it matches no model's ocean cells and has undocumented provenance. Chosen (user decision 2026-09-27) over also dropping a coastal ring or cross-model-flagged cold cells, which shift *every* model's factor by ~1.5% / ~0.5% without a CCSM4/CESM1-specific effect — see `docs/relative_nino34.md` §5 |
+| `config.TROPICS_LAND_FRAC_RANGE` | `(0.18, 0.30)` | Assertion bounds on each land-masked group's 20S-20N NaN fraction (observed 0.23-0.26); wide enough to tolerate model coastline differences, narrow enough that a group losing its land mask (0.00, as CanSIPS) fails loudly |
 | Relative index definition | `ssta_rel = ssta - ssta_trop` (unscaled), then `x factor_monthly` (or `factor_seasonal`) | Niño-3.4 anomaly minus the tropical-mean anomaly better tracks local atmospheric instability / deep convection and is less sensitive to reclassification as the 30-yr climatology drifts under tropical-mean warming; subtracting the tropical mean loses variance, which the scale factor restores so fixed ±0.5°C ENSO thresholds stay meaningful |
 | `config.rel_scaling_factor` formula | `factor(model, month, L) = std_obs(n34) / std_model(n34r)`, both over forecast starts `S` in 1991-2020, via `groupby('S.month')` on the `(S, L)` grid | Per the first author of L'Heureux et al. (2024) (2026-07-06 correspondence): "scale the model relative Niño-3.4 variance to match the observed 1991-2020 Niño-3.4 variance." This is a deliberate **extension beyond the paper**, which defines only an obs-only ratio (`std_obs(n34)/std_obs(n34-trop)`, one number per calendar month, model-independent, formerly `config.load_obs_scaling`); the paper also uses 1950-2020 for its std ratio vs. 1991-2020 for the anomaly climatology — this project uses 1991-2020 for both, unchanged from the prior implementation |
 | Denominator is model-dependent | `std_model(n34r)`, not `std_obs(n34-trop)` | The prior implementation's scale was a pure observational ratio (same factor applied to every model); per the first author, the factor should instead restore *each model's own* relative-index variance to the observed Niño-3.4 variance, so models with more/less variance in their `ssta_rel` get correspondingly different factors |
@@ -748,6 +767,21 @@ monthly and seasonal — each with 4 rows (`n34 anom`, `n34 rank`, `n34r anom`,
   `"sea_surface_temperature"` before this was fixed). `plot_grid` now
   replaces `da.attrs` outright (`da.attrs = {"units": "degC"}`) after
   renaming to `spec['prefix']`, rather than patching the existing dict.
+- **Cold coastal cells in CCSM4/CESM1 are deliberately left inside the
+  tropical-mean mask.** About 330 cells per model (334 CCSM4, 327 CESM1),
+  ~95% adjacent to land, have climatologies >3°C below the cross-model
+  median (coldest in-mask ~11.5°C). The values are identical in the IRI
+  source (not an NMME-zarr fetch error). Their anomalies still track the
+  other models (median corr 0.92, damped ~0.7x), and dropping them moves
+  every model's scaling factor by ~0.5-0.7% — no CCSM4/CESM1-specific
+  effect — so masking them would redefine the index without correcting
+  anything. Evidence and the rejected alternatives: `docs/relative_nino34.md` §5.
+- **Store change breaks the mask assumptions** (e.g. NMME-zarr starts
+  land-masking CanSIPS, or a group loses its land NaNs):
+  `tropics_ocean_mask()` asserts rather than adapting — excluded groups must
+  have land fraction exactly 0, other groups must fall in
+  `TROPICS_LAND_FRAC_RANGE`. Resolve by updating
+  `TROPICS_MASK_EXCLUDE_GROUPS`, deliberately.
 
 ## Verification Snippet
 
@@ -771,6 +805,13 @@ assert two_clim_present, "expected at least one TWO_CLIM_GROUPS model present"
 assert set(ds.ssta_rel.dims) == set(ds.ssta.dims), "ssta_rel dims should match ssta"
 assert np.allclose(ds.ssta_rel.values, (ds.ssta - ds.ssta_trop).values, equal_nan=True), \
     "ssta_rel should equal ssta - ssta_trop exactly (unscaled)"
+
+# Tropical-mean common ocean mask (2026-09-27): reads the full store (~1 min);
+# asserts its own per-group land-fraction invariants internally.
+ocean_mask = config.tropics_ocean_mask()
+assert set(ocean_mask.dims) == {"Y", "X"} and ocean_mask.dtype == bool
+assert 10_000 < int(ocean_mask.sum()) < 11_500, \
+    f"unexpected ocean cell count {int(ocean_mask.sum())} (10,859 on 2026-09-27)"
 
 factor_monthly, factor_seasonal = config.rel_scaling_factor(ds)
 assert set(factor_monthly.dims) == {"model", "month", "L"}, "factor_monthly should be (model, month, L)"
@@ -888,6 +929,7 @@ print("Verification passed.")
 - **Verification snippet's "Synthetic-plume sanity" block is broken** (pre-existing, found 2026-09-07 while re-running the full snippet after this session's `strength_probabilities` additions — not caused by this session's changes, confirmed unchanged in `git show HEAD:specs/latest_forecast.md`). It builds `avail` as *positional* indices (`np.where(...)[0]`) and passes them to `_synthetic_plume`, which does `ds[...].sel(model=avail_models)` — `.sel` expects model *names* (as `_available_models` in the actual script returns), so it raises `KeyError: "not all values found in index 'model'"`. Needs `avail_models = ds.model.isel(model=avail).values` (matching the pattern already used a few lines above in the "Summary-table rank sanity" block) before the `_synthetic_plume` calls. Not fixed this session (out of scope — unrelated to `strength_probabilities`); the rest of the snippet (through the new strength-category partition check) passes.
 - **`latest_forecast_summary.md` doesn't carry the same MMM-composition flag as the figures.** This session's `_annotate_mmm_steps` fix (see Synchronization Log 2026-09-07) is figure-only; `write_summary_tables`/`_historical_mmm` compute the same kind of shrinking-model-set MMM for the summary table's anomaly/rank rows but the table has no equivalent note when a lead's model count differs from the pool. Not addressed this session — scoped to "the latest plots" per the request that prompted the fix.
 - **Whether `GFDL-SPEAR` belongs in the MMM pool at all** — raised 2026-08-05, still open. 9 of its last 14 starts (2025-06 through 2026-06) are interior all-NaN upstream (see `config._nan_start_report`, Synchronization Log 2026-08-05), so it drops in and out of `avail`/the MMM ranking climatology inconsistently across recent inits, unlike a model that has simply reached its lead limit (which `_annotate_mmm_steps`, added this session, now flags). Needs a decision: exclude `GFDL-SPEAR` from the MMM pool until upstream is fixed, flag its intermittent absence the same way as the lead-limit case, or leave as-is pending an upstream fix. Not addressed this session.
+- **CanSIPS land is not NaN in the source store** (found 2026-09-27). `CanSIPS-IC4-CanESM5` and `CanSIPS-IC4-GEM52NEMO` in `~/claude/NMME-zarr` fill land with SST-like values, identical to the IRI archive. The tropical mean here is protected by the common mask (`config.tropics_ocean_mask`), but other consumers of the store (e.g. `~/claude/enso-t2m`, `~/claude/enso-indices-us`) are not. Decision to make in NMME-zarr: whether to NaN CanSIPS land at build time (and from which mask), and add build QA that fails when a group's 20S-20N land fraction is 0. If it does, update `TROPICS_MASK_EXCLUDE_GROUPS` here (the assertion will force it).
 
 ## Synchronization Log
 
@@ -919,3 +961,4 @@ print("Verification passed.")
 | 2026-07-29 | **Added the summary-table output** (`write_summary_tables`, `_historical_mmm`, `_rank_at_lead`): `plots/latest_forecast/latest_forecast_summary.md`, monthly + seasonal MMM anomaly tables for both indices, each value's rank (1 = highest) among all MMM forecasts issued in the same calendar start month, `ANALYSIS_START_YEAR`-present. Design decisions confirmed with the user: one combined table per kind (4 rows: `n34`/`n34r` anom/rank) rather than 4 separate tables; ranking pool uses the **fixed model set from the current forecast** applied across all historical years (matching the plotted MMM line), not each year's true historical roster. See Algorithm §5. | ✓ |
 | 2026-07-09 | **Added a multi-model mean (MMM) line to Compare/Spread/Mean.** New `MMM_COLOR = "0.75"` constant; each function collects the per-model arrays it already computes into a list during the loop, then plots `xr.concat(..., dim="model").mean("model")` after the loop with no explicit `zorder` (renders on top, drawn last) and `label="MMM"`. Also standardized `ax.legend(ncol=...)` to `2` in all three (was 1/2/3). **Also tried, then reverted same-session:** adding an 8th "MMM" panel to the Grid facet (`plot_grid`) by broadcasting the same MMM series across the `M` coordinate into a uniform-color block — the user judged this a bad idea and asked it removed; Grid stays at 7 panels, 8th `col_wrap` slot empty, as before. See Algorithm §4 and Constants. All 12 line-plot figures (`n34_*`/`n34r_*` compare/spread/mean, monthly/seasonal) regenerated; Grid figures unchanged from pre-session. | ✓ |
 | 2026-08-05 | **Added source-gap reporting to the load banner.** New `config._nan_start_report(ds)`, called from both print paths of `config.load_nino34_ssta` (cache-hit and recompute). Reports, per model, starts that are all-NaN across `(M, L)` *and* interior to that model's own first/last valid start — the interior test is what distinguishes a real gap from the leading/trailing NaN padding created by the merged `S` union (models with shorter records, or that have not yet issued the newest init). Diagnostic output only: no change to any figure, table, or computed value. Motivated by a `NASA-GEOSS2S` init that was silently absent from the plumes because the upstream zarr update had no-opped on a stale IRIDL Squid cache entry; the banner immediately surfaced a second, unrelated condition — 9 interior all-NaN `GFDL-SPEAR` starts between 2025-06 and 2026-06. See Algorithm §1 step 6 and Edge Cases. | ✓ |
+| 2026-09-27 | **Tropical mean restricted to a common ocean mask ("mask A").** New `config.tropics_ocean_mask()`, `TROPICS_MASK_EXCLUDE_GROUPS` (both CanSIPS), `TROPICS_LAND_FRAC_RANGE=(0.18, 0.30)`; `_tropics_average(x, ocean_mask)` now applies `x.where(mask)` instead of relying on land NaNs, which CanSIPS lacks (~3,400 land cells were in their 20S-20N mean). Mask = intersection of the 5 land-masked groups' any-(S,M,L)-valid cells, 10,859 cells, same for all models. Cache key now includes the mask definition. Effect (1991-2020): scaling factor median change 3.0% CanESM5, 5.9% GEM5.2, ≤0.8% others; n34r AC change ≤0.028. Sept-2026 n34r MMM +0.02-0.04°C; n34 figures byte-identical. CCSM4/CESM1 cold coastal cells deliberately not masked (Edge Cases). User decision; evidence in `docs/relative_nino34.md` §5 | ✓ |
