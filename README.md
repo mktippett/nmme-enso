@@ -101,7 +101,7 @@ project/
 ├── scripts/          # analysis scripts
 │   └── config.py     # shared constants + data loaders (edit here, not in individual scripts)
 ├── specs/            # behavioral specifications (one per script) — see below
-├── docs/             # methodology notes (relative Niño-3.4 in models; reproducing NOAA CPC's RONI)
+├── docs/             # methodology notes (relative Niño-3.4 in models; reproducing NOAA CPC's RONI; NMME land masking)
 ├── plots/            # canonical output figures (one subdirectory per script)
 ├── tex/              # Beamer slides
 ├── papers/           # manuscript references (not committed)

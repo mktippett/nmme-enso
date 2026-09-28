@@ -166,7 +166,9 @@ Implementation: `config.rel_scaling_factor` (factor),
 ## 5. The tropical-mean ocean mask
 
 *Decided 2026-09-27. Implementation: `config.tropics_ocean_mask`,
-`config.TROPICS_MASK_EXCLUDE_GROUPS`.*
+`config.TROPICS_MASK_EXCLUDE_GROUPS`. Standalone write-up of the land/coastal
+findings (for readers outside this project, incl. model maintainers):
+[nmme_land_mask.md](nmme_land_mask.md).*
 
 ### Definition
 
