@@ -49,7 +49,7 @@ initializations arrive):
 > members (2026-03 start, member 5; 2026-07 start, member 1) — flat or
 > inverted trajectories inconsistent with the rest of the ensemble — reported
 > upstream 2026-07-07 and still present in the archived data as of 2026-08-06.
-> Neither start is part of the plume above (now at the 2026-08 init, whose
+> Neither start is part of the plume above (now at the 2026-10 init, whose
 > members are clean); the defect resurfaces only if one of those two starts is
 > replotted directly, e.g. via `--init-date 2026-07`.
 
@@ -74,6 +74,22 @@ export ERSSTV5_NC=$PWD/$dest
 # 3. Run any script
 mamba run -n pangeo-local python scripts/skill.py
 ```
+
+### Updating for a new initialization
+
+Once [nmme-zarr](https://github.com/mktippett/nmme-zarr) has appended the
+new start to the store:
+
+```bash
+# 1. Refresh ERSSTv5 (the Quickstart step 2 command)
+# 2. Regenerate the latest-forecast figures and latest_forecast_summary.md;
+#    with no arguments the script uses the newest initialization in the store
+mamba run -n pangeo-local python scripts/latest_forecast.py
+```
+
+No manual cache clearing is needed. The `cache/` loader is keyed on each
+store group's S length, last start, and `last_updated` stamp, so a newly
+appended (or re-fetched trailing) start triggers a recompute automatically.
 
 ## Scripts
 
