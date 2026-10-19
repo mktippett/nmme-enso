@@ -60,6 +60,7 @@ PLOTS_DIR_LATEST_FORECAST    = PLOTS_DIR / "latest_forecast"
 PLOTS_DIR_SKILL              = PLOTS_DIR / "skill"
 PLOTS_DIR_REL_SCALING_COMPARE = PLOTS_DIR / "rel_scaling_compare"
 PLOTS_DIR_RONI_FACTOR_BACKOUT = PLOTS_DIR / "roni_factor_backout"
+PLOTS_DIR_FORECAST_FLASHLIGHT = PLOTS_DIR / "forecast_flashlight"
 
 # ---------------------------------------------------------------------------
 # Niño-3.4 region
