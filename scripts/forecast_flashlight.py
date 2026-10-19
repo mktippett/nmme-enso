@@ -86,7 +86,8 @@ def beam(ds, start, spec, now_idx):
     """Seasonal n34r MMM and band quantiles for one init, on valid leads only.
 
     Returns a Dataset with dims (L,) and a `time` coord (target center month):
-    mean, plus q<pct> variables for each BAND_QUANTILES bound.
+    mean, sd (hindcast-error sd per lead), plus q<pct> variables for each
+    BAND_QUANTILES bound.
     """
     avail = _available_models(ds, spec, now_idx)
     start_month = int(ds.S.isel(S=now_idx).dt.month)
@@ -102,9 +103,10 @@ def beam(ds, start, spec, now_idx):
     sd = xr.DataArray(np.sqrt(np.diag(cov)), dims="L", coords={"L": valid_L})
     mean = mmm.sel(L=valid_L)
 
-    out = xr.Dataset({"mean": mean})
+    out = xr.Dataset({"mean": mean, "sd": sd})
     for q in sorted({q for pair in BAND_QUANTILES for q in pair}):
         out[f"q{round(q * 100):02d}"] = mean + norm.ppf(q) * sd
+    # NMME L labels are 0.5, 1.5, ...; int() gives the whole-month offset of the target center.
     target = pd.DatetimeIndex([start[now_idx] + pd.DateOffset(months=int(lead)) for lead in valid_L.values])
     out = out.assign_coords(time=("L", target.to_period("M").to_timestamp()))
     print(

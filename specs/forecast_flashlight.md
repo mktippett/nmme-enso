@@ -49,7 +49,10 @@ between frames). Exploratory/monitoring, not a manuscript figure.
      plume (Barnston et al. 2015), as in `plot_strength_probabilities`, not
      Monte Carlo.
    - Target time of lead L = init month + L months (center month of the
-     3-month season). Only `valid_L` (L = 1…10) is kept.
+     3-month season). Only `valid_L` (L = 1…10) is kept. NMME `L` labels are
+     0.5, 1.5, …, so the whole-month offset is `int(L)`.
+   - Returned Dataset: `mean`, `sd` (per-lead hindcast-error sd, used by
+     `forecast_flashlight_video.py`), and the `q<pct>` band bounds.
 3. **Observed path** (`obs_n34r_seasonal()`): 3-month centered running mean
    of ERSSTv5 `n34_anom` and `rel_anom`; scale per center calendar month
    m: `s_m = std(n34_anom_seas | m) / std(rel_anom_seas | m)` over
@@ -140,3 +143,4 @@ print("ok")
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
 | 2026-10-19 | Initial `scripts/forecast_flashlight.py`: fixed-axis animated n34r seasonal forecast GIF (Gaussian synthetic-spread bands, scaled ERSSTv5 relative-index obs path), modeled on a user-supplied NMME ENSO Outlook RONI GIF. Added `--trail` (faded gray earlier MMMs + 5–95% bands, separate `_trail` file); default first init changed Feb 2026 → Nov 2025 the same day. New `config.PLOTS_DIR_FORECAST_FLASHLIGHT`. | ✓ |
+| 2026-10-19 | `beam()` now also returns `sd` (per-lead hindcast-error sd) for `forecast_flashlight_video.py`; comment documenting `int(L)` on NMME's 0.5-offset lead labels. No change to GIF output. | ✓ |
