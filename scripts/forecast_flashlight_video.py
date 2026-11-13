@@ -121,7 +121,7 @@ def render(x, mu, sd, gx, gy):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--first-init", default="2025-05")
-    parser.add_argument("--last-init", default="2026-10")
+    parser.add_argument("--last-init", default="2026-11")
     parser.add_argument("--stills", default=None, help="Comma-separated issue-time values (0 = first issue; 5.5 = halfway 6th->7th) to write as PNGs instead of the video.")
     parser.add_argument("--stills-dir", default=None)
     args = parser.parse_args()

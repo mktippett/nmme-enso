@@ -1,6 +1,6 @@
 # forecast_flashlight.py — Behavioral Specification
 
-> Last reviewed against code: 2026-10-19 (initial version)
+> Last reviewed against code: 2026-11-13
 
 ## Purpose
 
@@ -17,7 +17,7 @@ between frames). Exploratory/monitoring, not a manuscript figure.
 
 | File | Relevant variables | Filters applied |
 |------|--------------------|-----------------|
-| `config.STORE_SST` via `config.load_nino34_verification()` | `ssta_rel(model, S, M, L)`, `obsa(S, L)` | Inits `--first-init` … `--last-init` (default 2025-11 … 2026-10); per init, models with non-NaN lead-0 forecast (`latest_forecast._available_models`) |
+| `config.STORE_SST` via `config.load_nino34_verification()` | `ssta_rel(model, S, M, L)`, `obsa(S, L)` | Inits `--first-init` … `--last-init` (default 2025-11 … 2026-11); per init, models with non-NaN lead-0 forecast (`latest_forecast._available_models`) |
 | `config.ERSSTV5_NC` via `config._obs_index_anomalies()` | `n34_anom(time)`, `rel_anom(time)` (1991-2020 monthly climatology) | Plotted only within the fixed x-window |
 | `config.rel_scaling_factor(ds)` | seasonal factor `(model, month, L)` | — |
 
@@ -144,3 +144,4 @@ print("ok")
 |------|-------------|--------------|
 | 2026-10-19 | Initial `scripts/forecast_flashlight.py`: fixed-axis animated n34r seasonal forecast GIF (Gaussian synthetic-spread bands, scaled ERSSTv5 relative-index obs path), modeled on a user-supplied NMME ENSO Outlook RONI GIF. Added `--trail` (faded gray earlier MMMs + 5–95% bands, separate `_trail` file); default first init changed Feb 2026 → Nov 2025 the same day. New `config.PLOTS_DIR_FORECAST_FLASHLIGHT`. | ✓ |
 | 2026-10-19 | `beam()` now also returns `sd` (per-lead hindcast-error sd) for `forecast_flashlight_video.py`; comment documenting `int(L)` on NMME's 0.5-offset lead labels. No change to GIF output. | ✓ |
+| 2026-11-13 | Default `--last-init` 2026-10 → 2026-11 (new NMME init). Regenerated both GIFs (now 13 frames); removed the stale `_2025-11_2026-10` outputs. No method change. | ✓ |

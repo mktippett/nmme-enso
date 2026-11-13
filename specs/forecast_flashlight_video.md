@@ -1,6 +1,6 @@
 # forecast_flashlight_video.py — Behavioral Specification
 
-> Last reviewed against code: 2026-10-19 (initial prototype)
+> Last reviewed against code: 2026-11-13
 
 ## Purpose
 
@@ -16,7 +16,7 @@ scoring. Exploratory/outreach prototype, not a manuscript figure.
 
 | File | Relevant variables | Filters applied |
 |------|--------------------|-----------------|
-| `config.load_nino34_verification()` (via `forecast_flashlight.beam`) | `ssta_rel`, `obsa` | Inits `--first-init` … `--last-init` (default 2025-05 … 2026-10); available models per init |
+| `config.load_nino34_verification()` (via `forecast_flashlight.beam`) | `ssta_rel`, `obsa` | Inits `--first-init` … `--last-init` (default 2025-05 … 2026-11); available models per init |
 | `config.ERSSTV5_NC` (via `forecast_flashlight.obs_n34r_seasonal`) | `n34_anom`, `rel_anom` | Path drawn within the fixed x-window |
 
 All forecast and observed quantities come from `forecast_flashlight.py`'s
@@ -28,7 +28,7 @@ This script adds no statistics, only rendering.
 
 | File | Contents | Format |
 |------|----------|--------|
-| `plots/forecast_flashlight/n34r_seasonal_<first>_<last>_nightwalk.mp4` | Night-walk animation | MP4 (H.264, yuv420p, CRF 20), 1280×720, 30 fps; ≈ (n_inits−1)·1 s + 3 s (default 18 inits: 601 frames, 20.0 s) |
+| `plots/forecast_flashlight/n34r_seasonal_<first>_<last>_nightwalk.mp4` | Night-walk animation | MP4 (H.264, yuv420p, CRF 20), 1280×720, 30 fps; ≈ (n_inits−1)·1 s + 3 s (default 19 inits: 631 frames, 21.0 s) |
 | `--stills T1,T2,… --stills-dir DIR` | Single frames at issue-time values T (0 = first issue; fractional = interpolated) instead of the video | PNG `still_<T>.png` |
 
 ## Algorithm
@@ -164,3 +164,4 @@ print("ok")
 | Date | Code change | Spec updated |
 |------|-------------|--------------|
 | 2026-10-19 | Initial prototype `scripts/forecast_flashlight_video.py`. Iterated with user the same day: hit-dot scoring (lead-3 PIT classes + tally) replaced by the lit-path-ahead encoding; afterglow given a nonzero floor and switched from sum to max; pauses replaced by constant-speed linear interpolation; default first init 2025-11 → 2025-05; rotated flashlight glyph added (scale 1.6 → 1.2). | ✓ |
+| 2026-11-13 | Default `--last-init` 2026-10 → 2026-11 (new NMME init). Regenerated the MP4 (631 frames, 21.0 s); removed the stale `_2025-05_2026-10` output. No rendering change. | ✓ |

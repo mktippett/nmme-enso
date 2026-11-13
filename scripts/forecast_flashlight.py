@@ -119,7 +119,7 @@ def beam(ds, start, spec, now_idx):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--first-init", default="2025-11", help="First initialization (YYYY-MM).")
-    parser.add_argument("--last-init", default="2026-10", help="Last initialization (YYYY-MM).")
+    parser.add_argument("--last-init", default="2026-11", help="Last initialization (YYYY-MM).")
     parser.add_argument("--trail", action="store_true", help="Keep earlier inits' MMM lines and 5-95%% bands as faded gray traces.")
     args = parser.parse_args()
 
