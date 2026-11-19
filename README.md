@@ -112,6 +112,35 @@ appended (or re-fetched trailing) start triggers a recompute automatically.
 | CPC Relative ONI (RONI) table, seasonal | [NOAA CPC](https://www.cpc.ncep.noaa.gov/data/indices/RONI.ascii.txt) | Used only by `roni_factor_backout.py`. No refresh command yet — manual re-download. |
 | CPC relative Niño-3.4 table, monthly | [NOAA CPC](https://www.cpc.ncep.noaa.gov/data/indices/Rnino34.ascii.txt) | Used only by `roni_factor_backout.py`. No refresh command yet — manual re-download. |
 
+### ERSSTv5 vs. ERSSTv6 for the n34r forecasts
+
+The verification pipeline stays on ERSSTv5 for now, although CPC's RONI is
+defined on ERSSTv6. A one-off test (2026-11-19) swapped in v6 by pointing
+`ERSSTV5_NC` at the v6 file; no code changes were needed. For n34r, the
+observations enter in two places: the scaling factor's target variance
+(observed 1991-2020 Niño-3.4) and the hindcast-error sd behind the
+synthetic-spread bands. The forecast anomalies come from the models alone.
+
+For the 2026-10 initialization's seasonal multi-model mean:
+
+| Season | OND | NDJ | DJF | JFM | FMA | MAM |
+|---|---|---|---|---|---|---|
+| ERSSTv5 (°C) | 2.99 | 2.94 | 2.69 | 2.19 | 1.57 | 1.04 |
+| ERSSTv6 (°C) | 2.87 | 2.85 | 2.63 | 2.14 | 1.55 | 1.04 |
+
+- Observed 1991-2020 variance is slightly lower in v6, so the scaling
+  factors shrink (seasonal maximum 2.36 → 2.20). Individual model forecasts
+  drop by roughly 3-5% near the peak.
+- The largest difference is 0.12 °C, at the strongest anomalies (OND). It
+  falls to about 0.05 °C by DJF and is near zero by spring. The peak timing
+  and forecast shape are unchanged.
+- The hindcast-error sd changes by at most 0.02 °C.
+
+The practical effect is on threshold reading. Under v5 the peak
+(+2.99 °C) sits at the project's 3.0 °C Super El Niño line; under v6 it is
+clearly below it. Keep this in mind when comparing these n34r numbers with
+CPC's published RONI.
+
 ## Directory Structure
 
 ```
