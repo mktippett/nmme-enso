@@ -1,6 +1,6 @@
 # forecast_flashlight.py — Behavioral Specification
 
-> Last reviewed against code: 2026-11-13
+> Last reviewed against code: 2026-11-19
 
 ## Purpose
 
@@ -27,6 +27,7 @@ between frames). Exploratory/monitoring, not a manuscript figure.
 |------|----------|--------|
 | `plots/forecast_flashlight/n34r_seasonal_<first>_<last>.gif` | One frame per init: current beam (MMM + 5–95/15–85/25–75% bands), fixed observed path, dotted line at issue month, "Issued <Mon YYYY>" box | GIF, 1300×700 (13×7 in, dpi 100), 1 s/frame, last frame held 3 s, loops |
 | `plots/forecast_flashlight/n34r_seasonal_<first>_<last>_trail.gif` (`--trail`) | As above plus every earlier init's MMM line and 5–95% band in faded gray, beneath the current beam | GIF, same |
+| `plots/forecast_flashlight/n34r_seasonal_<first>_<last>_table.tex` / `.pdf` | Table backing the GIF: columns = target season (two-level header, year of center month), row blocks = init, each block one row per store model (fixed order) + bold MMM; Observed row on top; explanatory note below. Written every run; `--table-only` skips the GIF | LaTeX `longtable`, letter landscape; PDF via `latexmk` if on PATH (aux files cleaned) |
 
 ## Algorithm
 
@@ -52,7 +53,9 @@ between frames). Exploratory/monitoring, not a manuscript figure.
      3-month season). Only `valid_L` (L = 1…10) is kept. NMME `L` labels are
      0.5, 1.5, …, so the whole-month offset is `int(L)`.
    - Returned Dataset: `mean`, `sd` (per-lead hindcast-error sd, used by
-     `forecast_flashlight_video.py`), and the `q<pct>` band bounds.
+     `forecast_flashlight_video.py`), the `q<pct>` band bounds, and
+     `model_mean(model, L)` — the per-model ensemble means the MMM averages
+     (available models only).
 3. **Observed path** (`obs_n34r_seasonal()`): 3-month centered running mean
    of ERSSTv5 `n34_anom` and `rel_anom`; scale per center calendar month
    m: `s_m = std(n34_anom_seas | m) / std(rel_anom_seas | m)` over
@@ -63,7 +66,14 @@ between frames). Exploratory/monitoring, not a manuscript figure.
    the last beam's last target, monthly ticks labeled by season (year shown
    on the first tick and on Jan/Jul). y: min/max over all beams' 5%/95%
    bounds and the obs in the x-window, floored/ceiled to 0.5 °C.
-5. **Frames.** Each frame clears and redraws: (`--trail` only) gray 5–95%
+5. **Table** (`write_table()`): each beam's `L` swapped to its `time`
+   coord, concatenated over a new `init` dim with an outer join on target
+   season; `model_mean` reindexed to all store models. Cell rules: finite
+   value → `%.2f`; NaN within that init's valid targets (MMM finite) → "--"
+   (model absent or past its last lead); outside → blank. Observed row is
+   `obs_n34r_seasonal()` reindexed to the table's targets. Numbers are the
+   same objects the GIF draws — no separate computation.
+6. **Frames.** Each frame clears and redraws: (`--trail` only) gray 5–95%
    band + gray MMM line for every earlier init; the current beam's three
    bands (outermost first) and MMM; the observed path; a dotted vertical
    line at the issue month; the issue-date box. Last frame repeated
@@ -76,7 +86,7 @@ between frames). Exploratory/monitoring, not a manuscript figure.
 | `BAND_QUANTILES` | (0.05,0.95), (0.15,0.85), (0.25,0.75) | Match the reference NMME ENSO Outlook GIF's 90/70/50% ranges |
 | Spread method | Gaussian MMM ± hindcast-error sd | User's choice (2026-10-19) over pooled-member quantiles: the calibrated synthetic spread already used in `latest_forecast` |
 | Index | n34r seasonal (ERSSTv5 obs) | User's choice (2026-10-19) over CPC RONI obs or standard Niño-3.4: keeps obs and forecast on the project's own definition |
-| `--first-init` / `--last-init` defaults | 2025-11 / 2026-10 | User request (initially Feb 2026 to match the reference; moved to Nov 2025 the same day) |
+| `--first-init` / `--last-init` defaults | 2025-11 / 2026-11 | User request (initially Feb 2026 to match the reference; moved to Nov 2025 the same day) |
 | Trail default | off | User chose "pure flashlight"; the faded trail was added afterward as an option rather than replacing the default, at user request |
 | `TRAIL_COLOR`, `TRAIL_BAND_ALPHA`, `TRAIL_LINE_ALPHA` | "0.5", 0.11, 0.5 | Cosmetic; tuned with the user (gray, then "a little darker" from 0.07/0.35) |
 | `FRAME_MS`, `LAST_FRAME_HOLD` | 1000 ms, 3 | Cosmetic |
@@ -91,6 +101,13 @@ between frames). Exploratory/monitoring, not a manuscript figure.
 - **Model set varies by frame.** GFDL-SPEAR enters the MMM only when it has
   that init (2026: Jan, Apr, Jul, Oct), per the project's use-when-available
   policy; `beam()` prints the model list per init.
+- **MMM composition varies with lead.** Where a shorter-lead model
+  (GEOSS2S, CFSv2) ends, the MMM at later targets is over the remaining
+  models — same as the plume figures (see `latest_forecast` MMM lead-9
+  policy). The table shows this directly ("--" in those model rows) and its
+  note states it.
+- **Model missing from the latest init.** At the 2026-11 init GEOSS2S was
+  not yet in the store, so that MMM is 5 models; rerun once it arrives.
 - **Positional init range.** Inits are `range(i0, i1 + 1)` over S positions;
   valid because the store's S axis is a contiguous monthly sequence
   (all-NaN starts remain as coordinates rather than gaps).
@@ -135,6 +152,8 @@ assert ((b.q05 <= b.q15) & (b.q15 <= b.q25) & (b.q25 <= b["mean"])
 assert np.allclose(b["mean"] - b.q25, b.q75 - b["mean"])  # symmetric Gaussian bands
 obs = obs_n34r_seasonal()
 assert obs.sel(time=slice("2025-10", "2026-08")).notnull().all()
+assert set(b.model_mean.dims) == {"model", "L"}
+assert np.allclose(b.model_mean.mean("model"), b["mean"])  # table MMM == GIF MMM
 print("ok")
 ```
 
@@ -145,3 +164,4 @@ print("ok")
 | 2026-10-19 | Initial `scripts/forecast_flashlight.py`: fixed-axis animated n34r seasonal forecast GIF (Gaussian synthetic-spread bands, scaled ERSSTv5 relative-index obs path), modeled on a user-supplied NMME ENSO Outlook RONI GIF. Added `--trail` (faded gray earlier MMMs + 5–95% bands, separate `_trail` file); default first init changed Feb 2026 → Nov 2025 the same day. New `config.PLOTS_DIR_FORECAST_FLASHLIGHT`. | ✓ |
 | 2026-10-19 | `beam()` now also returns `sd` (per-lead hindcast-error sd) for `forecast_flashlight_video.py`; comment documenting `int(L)` on NMME's 0.5-offset lead labels. No change to GIF output. | ✓ |
 | 2026-11-13 | Default `--last-init` 2026-10 → 2026-11 (new NMME init). Regenerated both GIFs (now 13 frames); removed the stale `_2025-11_2026-10` outputs. No method change. | ✓ |
+| 2026-11-19 | New `write_table()` → `_table.tex`/`.pdf` (inits × models + MMM by target season, Observed row), written every run; new `--table-only` flag. `beam()` additionally returns `model_mean`; GIF values unchanged (not regenerated). Fixed stale 2026-10 default in Constants table. | ✓ |

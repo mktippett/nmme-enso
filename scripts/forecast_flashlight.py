@@ -1,7 +1,7 @@
 """
 forecast_flashlight.py — animated n34r seasonal forecast "flashlight" GIF.
 
-One frame per NMME initialization (default Nov 2025-Oct 2026). Axes are fixed in
+One frame per NMME initialization (default Nov 2025-Nov 2026). Axes are fixed in
 calendar time and value across all frames, so the observed path stays put and
 each month's forecast is a beam cast forward from its own init date — the
 question the animation asks is whether the beam follows the path.
@@ -23,12 +23,17 @@ question the animation asks is whether the beam follows the path.
     beams stay visible as the animation advances. Default is pure flashlight
     (no trail); the trail variant writes to a separate "_trail" file.
 
+  - Table (always written): LaTeX/PDF of the same numbers — per-model
+    ensemble means and MMM, rows = init x model, columns = target season,
+    plus the observed row; --table-only skips the GIF.
+
 Exploratory figure (no caption travels with it): method details are in the
 title/subtitle.
 
 Run:
     mamba run -n pangeo-local python scripts/forecast_flashlight.py
     mamba run -n pangeo-local python scripts/forecast_flashlight.py --trail
+    mamba run -n pangeo-local python scripts/forecast_flashlight.py --table-only
     mamba run -n pangeo-local python scripts/forecast_flashlight.py --first-init 2025-06 --last-init 2026-10
 """
 import argparse
@@ -85,25 +90,27 @@ def obs_n34r_seasonal(period=(config.CLIM_START_YEAR, config.CLIM_END_YEAR)):
 def beam(ds, start, spec, now_idx):
     """Seasonal n34r MMM and band quantiles for one init, on valid leads only.
 
-    Returns a Dataset with dims (L,) and a `time` coord (target center month):
-    mean, sd (hindcast-error sd per lead), plus q<pct> variables for each
-    BAND_QUANTILES bound.
+    Returns a Dataset with a `time` coord (target center month) on L: mean
+    (MMM), sd (hindcast-error sd per lead), q<pct> variables for each
+    BAND_QUANTILES bound — all dims (L,) — and model_mean (model, L), the
+    per-model ensemble means the MMM averages (available models only).
     """
     avail = _available_models(ds, spec, now_idx)
     start_month = int(ds.S.isel(S=now_idx).dt.month)
-    mmm = xr.concat(
+    model_mean = xr.concat(
         [
             _index_transform(ds[spec["var"]].isel(S=now_idx).sel(model=m), spec, True, m, start_month).mean("M")
             for m in avail
         ],
         dim="model",
-    ).mean("model")
+    )
+    mmm = model_mean.mean("model")
 
     valid_L, cov = _lead_error_cov(ds, avail, spec, True, now_idx)
     sd = xr.DataArray(np.sqrt(np.diag(cov)), dims="L", coords={"L": valid_L})
     mean = mmm.sel(L=valid_L)
 
-    out = xr.Dataset({"mean": mean, "sd": sd})
+    out = xr.Dataset({"mean": mean, "sd": sd, "model_mean": model_mean.sel(L=valid_L)})
     for q in sorted({q for pair in BAND_QUANTILES for q in pair}):
         out[f"q{round(q * 100):02d}"] = mean + norm.ppf(q) * sd
     # NMME L labels are 0.5, 1.5, ...; int() gives the whole-month offset of the target center.
@@ -116,11 +123,102 @@ def beam(ds, start, spec, now_idx):
     return out
 
 
+def write_table(beams, obs, start, i0, i1, models):
+    """LaTeX table (landscape longtable) backing the GIF: rows = init date,
+    split into one row per model plus the MMM; columns = target season.
+    Values are exactly the beam() numbers drawn in the frames. Observed n34r
+    (same scaling as the GIF's obs path) is the first row. A model absent at
+    an init shows "--" across that init's targets; targets outside an init's
+    valid leads are blank. Compiled to PDF with latexmk if available."""
+    # (init, model, time) per-model means and (init, time) MMM, aligned on target season.
+    by_init = [b.swap_dims(L="time").drop_vars("L") for b in beams]
+    inits = pd.DatetimeIndex([start[i] for i in range(i0, i1 + 1)])
+    tab = xr.concat(by_init, dim=pd.Index(inits, name="init"), join="outer")
+    times = pd.DatetimeIndex(tab.time.values)
+    model_mean = tab.model_mean.reindex(model=models)
+    covered = tab["mean"].notnull()  # (init, time): target within that init's valid leads
+    obs_row = obs.reindex(time=times)
+
+    def cell(v, ok=True):
+        return f"{v:.2f}" if np.isfinite(v) else ("--" if ok else "")
+
+    ncol = len(times)
+    lines = [
+        r"\documentclass{article}",
+        r"\usepackage[letterpaper,landscape,margin=1.2cm]{geometry}",
+        r"\usepackage{booktabs,longtable}",
+        r"\pagestyle{empty}",
+        r"\begin{document}",
+        r"\scriptsize",
+        r"\setlength{\tabcolsep}{2.5pt}",
+        r"\setlength{\LTcapwidth}{\textwidth}",
+        r"\begin{longtable}{ll" + "r" * ncol + "}",
+        r"\caption*{\normalsize NMME relative Ni\~no-3.4 (n34r) seasonal forecasts, initialized "
+        f"{inits[0]:%b %Y}--{inits[-1]:%b %Y} (\\textdegree C)" + r"}\\",
+    ]
+    # Two-level header: year of the season's center month, then season label.
+    years = times.year
+    yr_cells, rules, j = [], [], 0
+    for y in pd.unique(years):
+        n = int((years == y).sum())
+        yr_cells.append(rf"\multicolumn{{{n}}}{{c}}{{{y}}}")
+        rules.append(rf"\cmidrule(lr){{{j + 3}-{j + 2 + n}}}")
+        j += n
+    header = [
+        r"\toprule",
+        r" & & " + " & ".join(yr_cells) + r" \\",
+        "".join(rules),
+        r"Init & Model & " + " & ".join(_season_label(t.month) for t in times) + r" \\",
+        r"\midrule",
+    ]
+    lines += header + [r"\endfirsthead"] + header + [r"\endhead", r"\bottomrule", r"\endfoot"]
+    lines.append(r"\multicolumn{2}{l}{Observed} & " + " & ".join(cell(v, False) for v in obs_row.values) + r" \\")
+    lines.append(r"\midrule")
+    for k, init in enumerate(inits):
+        ok = covered.sel(init=init).values
+        for r, m in enumerate(models):
+            vals = model_mean.sel(init=init, model=m).values
+            label = f"{init:%b %Y}" if r == 0 else ""
+            lines.append(
+                f"{label} & {config.short_label(m)} & "
+                + " & ".join(cell(v, o) for v, o in zip(vals, ok)) + r" \\"
+            )
+        mvals = tab["mean"].sel(init=init).values
+        lines.append(
+            r" & \textbf{MMM} & " + " & ".join(rf"\textbf{{{cell(v, False)}}}" if np.isfinite(v) else "" for v in mvals) + r" \\"
+        )
+        if k < len(inits) - 1:
+            lines.append(r"\midrule")
+    lines += [
+        r"\end{longtable}",
+        r"\noindent Seasons are 3-month running means, labeled by their three months and grouped by the year of the center month. "
+        r"Model rows: ensemble mean of the model-relative scaled n34r (per model, start month, lead; as in \texttt{latest\_forecast.py}). "
+        r"MMM: mean over the models available at that init (``--'' = model not available); where a shorter-lead model (GEOSS2S, CFSv2) ends, later MMM targets average the remaining models, as in the plume figures. "
+        r"Observed: ERSSTv5 relative Ni\~no-3.4 scaled per center calendar month by the 1991--2020 std ratio $\sigma(\mathrm{N34})/\sigma(\mathrm{rel})$.",
+        r"\end{document}",
+    ]
+    config.PLOTS_DIR_FORECAST_FLASHLIGHT.mkdir(parents=True, exist_ok=True)
+    out = config.PLOTS_DIR_FORECAST_FLASHLIGHT / f"n34r_seasonal_{start[i0]:%Y-%m}_{start[i1]:%Y-%m}_table.tex"
+    out.write_text("\n".join(lines) + "\n")
+    print(f"  wrote {out} ({len(inits)} inits x {len(models)} models + MMM, {ncol} target seasons)")
+
+    import shutil
+    import subprocess
+    if shutil.which("latexmk"):
+        res = subprocess.run(
+            ["latexmk", "-pdf", "-interaction=nonstopmode", "-quiet", out.name],
+            cwd=out.parent, capture_output=True, text=True,
+        )
+        subprocess.run(["latexmk", "-c", out.name], cwd=out.parent, capture_output=True)
+        print(f"  {'wrote ' + str(out.with_suffix('.pdf')) if res.returncode == 0 else 'latexmk FAILED:' + res.stdout[-2000:]}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--first-init", default="2025-11", help="First initialization (YYYY-MM).")
     parser.add_argument("--last-init", default="2026-11", help="Last initialization (YYYY-MM).")
     parser.add_argument("--trail", action="store_true", help="Keep earlier inits' MMM lines and 5-95%% bands as faded gray traces.")
+    parser.add_argument("--table-only", action="store_true", help="Write the LaTeX/PDF table only; skip the GIF.")
     args = parser.parse_args()
 
     ds = config.load_nino34_verification()
@@ -132,6 +230,9 @@ def main():
 
     beams = [beam(ds, start, spec, i) for i in range(i0, i1 + 1)]
     obs = obs_n34r_seasonal()
+    write_table(beams, obs, start, i0, i1, list(ds.model.values))
+    if args.table_only:
+        return
 
     # Fixed axes: x from one month before the first beam's first target (so
     # the first init's own season is visible) to the last beam's last target;
